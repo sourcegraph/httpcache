@@ -13,6 +13,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httputil"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -116,6 +117,10 @@ func varyMatches(cachedResp *http.Response, req *http.Request) bool {
 	return true
 }
 
+// XCacheAge stores the age, in seconds, of a cache entry, for use by downstream
+// RoundTrippers.
+const XCacheAge = "x-cache-age"
+
 // RoundTrip takes a Request and returns a Response
 //
 // If there is a fresh Response already in cache, then it will be returned without connecting to
@@ -162,6 +167,12 @@ func (t *Transport) RoundTrip(req *http.Request) (resp *http.Response, err error
 				lastModified := cachedResp.Header.Get("last-modified")
 				if lastModified != "" && req.Header.Get("last-modified") == "" {
 					req.Header.Set("if-modified-since", lastModified)
+				}
+
+				// Add cache age header for downstream RoundTrippers.
+				date, err := Date(cachedResp.Header)
+				if err == nil {
+					req.Header.Set(XCacheAge, strconv.FormatFloat(time.Since(date).Seconds(), 'f', 0, 64))
 				}
 			}
 		}
