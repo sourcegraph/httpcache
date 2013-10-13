@@ -50,3 +50,8 @@ func New(basePath string) *Cache {
 		}),
 	}
 }
+
+// New returns a new Cache using the provided Diskv as underlying storage.
+func NewWithDiskv(d *diskv.Diskv) *Cache {
+	return &Cache{d}
+}
