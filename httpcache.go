@@ -192,6 +192,9 @@ func (t *Transport) RoundTrip(req *http.Request) (resp *http.Response, err error
 			if err != nil || resp.StatusCode != http.StatusOK {
 				t.Cache.Delete(cacheKey)
 			}
+			if err != nil {
+				return nil, err
+			}
 		}
 	} else {
 		reqCacheControl := parseCacheControl(req.Header)
@@ -199,8 +202,12 @@ func (t *Transport) RoundTrip(req *http.Request) (resp *http.Response, err error
 			resp = newGatewayTimeoutResponse(req)
 		} else {
 			resp, err = transport.RoundTrip(req)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
+
 	reqCacheControl := parseCacheControl(req.Header)
 	respCacheControl := parseCacheControl(resp.Header)
 
