@@ -2,7 +2,7 @@ package httpcache
 
 import (
 	"fmt"
-	. "launchpad.net/gocheck"
+	. "gopkg.in/check.v1"
 	"net"
 	"net/http"
 	"testing"
