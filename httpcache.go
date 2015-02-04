@@ -135,8 +135,9 @@ func (t *Transport) RoundTrip(req *http.Request) (resp *http.Response, err error
 	req = cloneRequest(req)
 	cacheKey := cacheKey(req)
 	cacheableMethod := req.Method == "GET" || req.Method == "HEAD"
+	cacheable := cacheableMethod && req.Header.Get("range") == ""
 	var cachedResp *http.Response
-	if cacheableMethod {
+	if cacheable {
 		cachedResp, err = CachedResponse(t.Cache, req)
 	} else {
 		// Need to invalidate an existing value
@@ -146,6 +147,10 @@ func (t *Transport) RoundTrip(req *http.Request) (resp *http.Response, err error
 	transport := t.Transport
 	if transport == nil {
 		transport = http.DefaultTransport
+	}
+
+	if !cacheable {
+		return transport.RoundTrip(req)
 	}
 
 	if cachedResp != nil && err == nil && cacheableMethod && req.Header.Get("range") == "" {
