@@ -2,6 +2,7 @@ package httpcache
 
 import (
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -90,6 +91,11 @@ func (s *S) SetUpSuite(c *C) {
 		w.Header().Set("Vary", "X-Madeup-Header")
 		w.Write([]byte("Some text content"))
 	}))
+	mux.HandleFunc("/ranged", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "max-age=3600")
+		w.Header().Set("Content-Type", "text/plain")
+		w.Write([]byte("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"))
+	}))
 
 	updateFieldsCounter := 0
 	mux.HandleFunc("/updatefields", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -111,6 +117,60 @@ func (s *S) TearDownSuite(c *C) {
 func (s *S) TearDownTest(c *C) {
 	s.transport.Cache = NewMemoryCache()
 	clock = &realClock{}
+}
+
+func (s *S) TestSuffixRangedQuery(c *C) {
+	req, err := http.NewRequest("GET", s.server.URL+"/ranged", nil)
+	c.Assert(err, IsNil)
+	req.Header.Add("Range", "bytes=10-")
+	resp, err := s.client.Do(req)
+	defer resp.Body.Close()
+	c.Assert(err, IsNil)
+	data, err := ioutil.ReadAll(resp.Body)
+	c.Assert(len(data), Equals, 52)
+	resp2, err := s.client.Do(req)
+	defer resp2.Body.Close()
+	c.Assert(resp2.Header.Get(XFromCache), Equals, "1")
+	c.Assert(err, IsNil)
+	data2, err := ioutil.ReadAll(resp2.Body)
+	c.Assert(len(data2), Equals, 42)
+	c.Assert(string(data2), Equals, "KLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
+}
+
+func (s *S) TestPrefixRangedQuery(c *C) {
+	req, err := http.NewRequest("GET", s.server.URL+"/ranged", nil)
+	c.Assert(err, IsNil)
+	req.Header.Add("Range", "bytes=-10")
+	resp, err := s.client.Do(req)
+	defer resp.Body.Close()
+	c.Assert(err, IsNil)
+	data, err := ioutil.ReadAll(resp.Body)
+	c.Assert(len(data), Equals, 52)
+	resp2, err := s.client.Do(req)
+	defer resp2.Body.Close()
+	c.Assert(resp2.Header.Get(XFromCache), Equals, "1")
+	c.Assert(err, IsNil)
+	data2, err := ioutil.ReadAll(resp2.Body)
+	c.Assert(len(data2), Equals, 10)
+	c.Assert(string(data2), Equals, "qrstuvwxyz")
+}
+
+func (s *S) TestCompleteRangedQuery(c *C) {
+	req, err := http.NewRequest("GET", s.server.URL+"/ranged", nil)
+	c.Assert(err, IsNil)
+	req.Header.Add("Range", "bytes=0-10")
+	resp, err := s.client.Do(req)
+	defer resp.Body.Close()
+	c.Assert(err, IsNil)
+	data, err := ioutil.ReadAll(resp.Body)
+	c.Assert(len(data), Equals, 52)
+	resp2, err := s.client.Do(req)
+	defer resp2.Body.Close()
+	c.Assert(resp2.Header.Get(XFromCache), Equals, "1")
+	c.Assert(err, IsNil)
+	data2, err := ioutil.ReadAll(resp2.Body)
+	c.Assert(len(data2), Equals, 10)
+	c.Assert(string(data2), Equals, "ABCDEFGHIJ")
 }
 
 func (s *S) TestGetOnlyIfCachedHit(c *C) {
