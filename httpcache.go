@@ -11,8 +11,10 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"net/http/httputil"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,7 +25,9 @@ const (
 	fresh
 	transparent
 	// XFromCache is the header added to responses that are returned from the cache
-	XFromCache = "X-From-Cache"
+	XFromCache         = "X-From-Cache"
+	RANGESEPARATOR     = "-"
+	RANGETYPESEPARATOR = "="
 )
 
 // A Cache interface is used by the Transport to store and retrieve responses.
@@ -51,7 +55,48 @@ func CachedResponse(c Cache, req *http.Request) (resp *http.Response, err error)
 	}
 
 	b := bytes.NewBuffer(cachedVal)
-	return http.ReadResponse(bufio.NewReader(b), req)
+	returnResponse, err := http.ReadResponse(bufio.NewReader(b), req)
+	if err != nil {
+		return nil, fmt.Errorf("error loading response from cache: %s\n", err.Error())
+	}
+
+	rangeRaw := req.Header.Get("range")
+	if rangeRaw != "" {
+		tmp := strings.Split(rangeRaw, RANGETYPESEPARATOR)
+		// standard format is bytes=START-END
+		rangetype, rangevalue := tmp[0], tmp[1]
+		if rangetype != "bytes" {
+			fmt.Printf("range type %s not supported\n", rangetype)
+			return returnResponse, nil
+		}
+		// we need to read all the body now, close it, and replace it with another reader
+		// as there is currently no way of "resetting" a Body
+		body, err := ioutil.ReadAll(returnResponse.Body)
+		if err != nil {
+			fmt.Printf("error reading cached response body: %s\n", err.Error())
+			return returnResponse, nil
+		}
+		returnResponse.Body.Close()
+		var rangedRequestStart, rangedRequestEnd int64
+		//TODO(uovobw): handle corrupted/nonstandard request header
+		rangeList := strings.Split(rangevalue, RANGESEPARATOR)
+		// the range is in the form -VAL , the wanted range is (end-val)->end
+		if strings.HasPrefix(rangevalue, RANGESEPARATOR) {
+			rangedRequestEnd = int64(len(body))
+			end, _ := strconv.ParseInt(rangeList[1], 10, 64)
+			rangedRequestStart = rangedRequestEnd - end
+			// the rang is in the form VAL-, the wanted range is val->end
+		} else if strings.HasSuffix(rangevalue, RANGESEPARATOR) {
+			rangedRequestStart, _ = strconv.ParseInt(rangeList[0], 10, 64)
+			rangedRequestEnd = int64(len(body))
+			// normal case with START-END
+		} else {
+			rangedRequestStart, _ = strconv.ParseInt(rangeList[0], 10, 64)
+			rangedRequestEnd, _ = strconv.ParseInt(rangeList[1], 10, 64)
+		}
+		returnResponse.Body = ioutil.NopCloser(bytes.NewReader(body[rangedRequestStart:rangedRequestEnd]))
+	}
+	return returnResponse, nil
 }
 
 // MemoryCache is an implemtation of Cache that stores responses in an in-memory map.
@@ -135,9 +180,8 @@ func (t *Transport) RoundTrip(req *http.Request) (resp *http.Response, err error
 	req = cloneRequest(req)
 	cacheKey := cacheKey(req)
 	cacheableMethod := req.Method == "GET" || req.Method == "HEAD"
-	cacheable := cacheableMethod && req.Header.Get("range") == ""
 	var cachedResp *http.Response
-	if cacheable {
+	if cacheableMethod {
 		cachedResp, err = CachedResponse(t.Cache, req)
 	} else {
 		// Need to invalidate an existing value
@@ -149,11 +193,11 @@ func (t *Transport) RoundTrip(req *http.Request) (resp *http.Response, err error
 		transport = http.DefaultTransport
 	}
 
-	if !cacheable {
+	if !cacheableMethod {
 		return transport.RoundTrip(req)
 	}
 
-	if cachedResp != nil && err == nil && cacheableMethod && req.Header.Get("range") == "" {
+	if cachedResp != nil && err == nil && cacheableMethod {
 		if t.MarkCachedResponses {
 			cachedResp.Header.Set(XFromCache, "1")
 		}
