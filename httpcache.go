@@ -26,8 +26,8 @@ const (
 	transparent
 	// XFromCache is the header added to responses that are returned from the cache
 	XFromCache         = "X-From-Cache"
-	RANGESEPARATOR     = "-"
-	RANGETYPESEPARATOR = "="
+	rangeSeparator     = "-"
+	rangeTypeSeparator = "="
 )
 
 // A Cache interface is used by the Transport to store and retrieve responses.
@@ -62,7 +62,7 @@ func CachedResponse(c Cache, req *http.Request) (resp *http.Response, err error)
 
 	rangeRaw := req.Header.Get("range")
 	if rangeRaw != "" {
-		tmp := strings.Split(rangeRaw, RANGETYPESEPARATOR)
+		tmp := strings.Split(rangeRaw, rangeTypeSeparator)
 		// standard format is bytes=START-END
 		rangetype, rangevalue := tmp[0], tmp[1]
 		if rangetype != "bytes" {
@@ -79,14 +79,14 @@ func CachedResponse(c Cache, req *http.Request) (resp *http.Response, err error)
 		returnResponse.Body.Close()
 		var rangedRequestStart, rangedRequestEnd int64
 		//TODO(uovobw): handle corrupted/nonstandard request header
-		rangeList := strings.Split(rangevalue, RANGESEPARATOR)
+		rangeList := strings.Split(rangevalue, rangeSeparator)
 		// the range is in the form -VAL , the wanted range is (end-val)->end
-		if strings.HasPrefix(rangevalue, RANGESEPARATOR) {
+		if strings.HasPrefix(rangevalue, rangeSeparator) {
 			rangedRequestEnd = int64(len(body))
 			end, _ := strconv.ParseInt(rangeList[1], 10, 64)
 			rangedRequestStart = rangedRequestEnd - end
 			// the rang is in the form VAL-, the wanted range is val->end
-		} else if strings.HasSuffix(rangevalue, RANGESEPARATOR) {
+		} else if strings.HasSuffix(rangevalue, rangeSeparator) {
 			rangedRequestStart, _ = strconv.ParseInt(rangeList[0], 10, 64)
 			rangedRequestEnd = int64(len(body))
 			// normal case with START-END
