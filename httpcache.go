@@ -16,6 +16,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httputil"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -68,70 +69,140 @@ func CachedResponse(c Cache, req *http.Request) (resp *http.Response, err error)
 		return nil, fmt.Errorf("error loading response from cache: %s\n", err.Error())
 	}
 
-	rangeRaw := req.Header.Get("range")
-	if rangeRaw != "" {
-		tmp := strings.Split(rangeRaw, rangeTypeSeparator)
-		// standard format is bytes=START-END
-		rangeType, rangeValue := tmp[0], tmp[1]
-		if rangeType != "bytes" {
-			logger.Print("range type %s not supported", rangeType)
-			return returnResponse, nil
+	if req.Header.Get("range") != "" {
+		strContentLength := returnResponse.Header.Get("content-length")
+		contentLength, err := strconv.ParseInt(strContentLength, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("response loaded from cache has null or malformed content-length: %s", contentLength)
 		}
-		// TODO(uovobw): handle comma-separated list of ranges
-		// in this case we simply split it and only handle the first range provided
-		if strings.Contains(tmp[1], ",") {
-			requestedRanges := strings.Split(tmp[1], ",")
-			logger.Printf("unsupported multiple ranges %s, only fulfilling %s", tmp[1], requestedRanges[0])
-			rangeValue = requestedRanges[0]
+		rangeRequestStart, rangeRequestEnd, err := findRanges(req, contentLength)
+		if err != nil {
+			return nil, err
 		}
-		// we need to read all the body now, close it, and replace it with another reader
-		// as there is currently no way of "resetting" a Body
+		if !validateRanges(rangeRequestStart, rangeRequestEnd, returnResponse) {
+			return nil, nil
+		}
+
 		body, err := ioutil.ReadAll(returnResponse.Body)
 		if err != nil {
 			logger.Print("error reading cached response body: %s", err.Error())
 			return returnResponse, nil
 		}
 		returnResponse.Body.Close()
-		var rangeRequestStart, rangeRequestEnd int64
-		rangeList := strings.Split(rangeValue, rangeSeparator)
-		// the range is in the form -VAL , the wanted range is (end-val)->end
-		if strings.HasPrefix(rangeValue, rangeSeparator) {
-			rangeRequestEnd = int64(len(body))
-			end, err := strconv.ParseInt(rangeList[1], 10, 64)
-			if err != nil {
-				logger.Printf("error parsing range header %s: %s", rangeList[1], err.Error())
-				return nil, err
-			}
-			rangeRequestStart = rangeRequestEnd - end
-			// the rang is in the form VAL-, the wanted range is val->end
-		} else if strings.HasSuffix(rangeValue, rangeSeparator) {
-			rangeRequestStart, err = strconv.ParseInt(rangeList[0], 10, 64)
-			if err != nil {
-				logger.Printf("error parsing range header %s: %s", rangeList[1], err.Error())
-				return nil, err
-			}
-			rangeRequestEnd = int64(len(body))
-			// normal case with START-END
-		} else {
-			rangeRequestStart, err = strconv.ParseInt(rangeList[0], 10, 64)
-			if err != nil {
-				logger.Printf("error parsing range start %s: %s", rangeList[0], err.Error())
-				return nil, err
-			}
-			rangeRequestEnd, err = strconv.ParseInt(rangeList[1], 10, 64)
-			if err != nil {
-				logger.Printf("error parsing range end %s: %s", rangeList[1], err.Error())
-				return nil, err
-			}
-		}
 
-		if rangeRequestStart >= rangeRequestEnd {
-			logger.Printf("received non valid ranges start %d end %d", rangeRequestStart, rangeRequestEnd)
-			return nil, fmt.Errorf("non valid ranges specified in range request")
-		}
 		returnResponse.Body = ioutil.NopCloser(bytes.NewReader(body[rangeRequestStart:rangeRequestEnd]))
 	}
 	return returnResponse, nil
+}
+
+// findRanges parses the range header value and the content length and returns (start, end, error)
+// it is not exported since it does not implement multiple ranges and only accepts bytes= ranges
+func findRanges(r *http.Request, totalLength int64) (start, end int64, err error) {
+	rawRange := r.Header.Get("range")
+	if rawRange == "" {
+		return -1, -1, fmt.Errorf("not a ranged request")
+	}
+	if !strings.HasPrefix(rawRange, "bytes=") {
+		return -1, -1, fmt.Errorf("non-bytes request %s range type unsupported", rawRange)
+	}
+	if strings.Contains(rawRange, ",") {
+		logger.Printf("unsupported multiple ranges, only fulfilling the first one: %s", rawRange)
+	}
+	re := regexp.MustCompile("bytes=([0-9]*)-([0-9]*)")
+	matchedValues := re.FindStringSubmatch(rawRange)[1:]
+	strStart := matchedValues[0]
+	strEnd := matchedValues[1]
+	// range in the form STRSTART-
+	if strEnd == "" {
+		end = totalLength
+		start, err = strconv.ParseInt(strStart, 10, 64)
+		if err != nil {
+			return -1, -1, err
+		}
+		// range in the form -STREND
+	} else if strStart == "" {
+		end = totalLength
+		start, err = strconv.ParseInt(strEnd, 10, 64)
+		if err != nil {
+			return -1, -1, err
+		}
+		start = totalLength - start
+		// range in the form STRSTART-STREND
+	} else {
+		start, err = strconv.ParseInt(strStart, 10, 64)
+		if err != nil {
+			return -1, -1, err
+		}
+		end, err = strconv.ParseInt(strEnd, 10, 64)
+		if err != nil {
+			return -1, -1, err
+		}
+	}
+	if start >= end {
+		return -1, -1, fmt.Errorf("invalid start %d >= end %d!", start, end)
+	}
+	return start, end, nil
+}
+
+// validateRanges checks that a cached request for a given response is within data that has been already loaded
+func validateRanges(start, end int64, resp *http.Response) (ok bool) {
+	// if the response cites partial content we need to compare the partial content we have stored
+	// with the ranges we require and, if not compatbile, fetch it again
+	// http://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html section 14.16
+	if resp.StatusCode == http.StatusPartialContent {
+		rawContentRange := resp.Header.Get("content-range")
+		if rawContentRange == "" {
+			logger.Printf("request for %s is stored as 206-partial-content but has no content-range header!", resp.Request.URL.String())
+			return false
+		}
+		if !strings.Contains(rawContentRange, "bytes") {
+			logger.Printf("non-satisfiable range type in %s", rawContentRange)
+			return false
+		}
+		// the format is START-END/TOTAL or START-END/* if TOTAL is unknown
+		// if we find * we re-fetch the request as most probably the content was ephemereal
+		// or is highly probable iot has changed
+		if strings.Contains(rawContentRange, "*") {
+			return false
+		}
+		re := regexp.MustCompile("bytes ([0-9]+)-([0-9]+)/([0-9]+)")
+		// the first element is always the full match, skip it
+		matchedValues := re.FindStringSubmatch(rawContentRange)[1:]
+		currentStart, err := strconv.ParseInt(matchedValues[0], 10, 64)
+		if err != nil {
+			logger.Printf("cached response has malformed content-range header %s", rawContentRange)
+			return false
+		}
+		currentEnd, err := strconv.ParseInt(matchedValues[1], 10, 64)
+		if err != nil {
+			logger.Printf("cached response has malformed content-range header %s", rawContentRange)
+			return false
+		}
+		total, err := strconv.ParseInt(matchedValues[2], 10, 64)
+		if err != nil {
+			logger.Printf("cached response has malformed content-range header %s", rawContentRange)
+			return false
+		}
+		// validate the request ranges against the response headers
+		if start < currentStart || end > currentEnd || end > total {
+			logger.Printf("start: %d, currentStart: %d, end: %d, currentEnd: %d, total: %d", start, currentStart, end, currentEnd, total)
+			return false
+		}
+		return true
+		// the response is full content, use the content-length header to verify ranges
+	} else {
+		contentLength, err := strconv.ParseInt(resp.Header.Get("content-length"), 10, 64)
+		if err != nil {
+			logger.Printf("stored response has malformed or invalid content length %s", contentLength)
+			return false
+		}
+		if end > contentLength {
+			return false
+		}
+		return true
+	}
+	logger.Print("we should never ever reach this line")
+	return false
 }
 
 // MemoryCache is an implemtation of Cache that stores responses in an in-memory map.
@@ -224,6 +295,9 @@ func (t *Transport) RoundTrip(req *http.Request) (resp *http.Response, err error
 	var cachedResp *http.Response
 	if cacheableMethod {
 		cachedResp, err = CachedResponse(t.Cache, req)
+		if err != nil {
+			fmt.Print(err)
+		}
 	} else {
 		// Need to invalidate an existing value
 		t.Cache.Delete(cacheKey)
