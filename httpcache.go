@@ -72,9 +72,9 @@ func CachedResponse(c Cache, req *http.Request) (resp *http.Response, err error)
 	if rangeRaw != "" {
 		tmp := strings.Split(rangeRaw, rangeTypeSeparator)
 		// standard format is bytes=START-END
-		rangetype, rangevalue := tmp[0], tmp[1]
-		if rangetype != "bytes" {
-			logger.Print("range type %s not supported", rangetype)
+		rangeType, rangeValue := tmp[0], tmp[1]
+		if rangeType != "bytes" {
+			logger.Print("range type %s not supported", rangeType)
 			return returnResponse, nil
 		}
 		// we need to read all the body now, close it, and replace it with another reader
@@ -85,32 +85,32 @@ func CachedResponse(c Cache, req *http.Request) (resp *http.Response, err error)
 			return returnResponse, nil
 		}
 		returnResponse.Body.Close()
-		var rangedRequestStart, rangedRequestEnd int64
+		var rangeRequestStart, rangeRequestEnd int64
 		//TODO(uovobw): handle corrupted/nonstandard request header
-		rangeList := strings.Split(rangevalue, rangeSeparator)
+		rangeList := strings.Split(rangeValue, rangeSeparator)
 		// the range is in the form -VAL , the wanted range is (end-val)->end
-		if strings.HasPrefix(rangevalue, rangeSeparator) {
-			rangedRequestEnd = int64(len(body))
+		if strings.HasPrefix(rangeValue, rangeSeparator) {
+			rangeRequestEnd = int64(len(body))
 			end, err := strconv.ParseInt(rangeList[1], 10, 64)
 			if err != nil {
 				logger.Printf("error parsing range header %s: %s", rangeList[1], err.Error())
 				return nil, err
 			}
-			rangedRequestStart = rangedRequestEnd - end
+			rangeRequestStart = rangeRequestEnd - end
 			// the rang is in the form VAL-, the wanted range is val->end
-		} else if strings.HasSuffix(rangevalue, rangeSeparator) {
-			rangedRequestStart, err = strconv.ParseInt(rangeList[0], 10, 64)
+		} else if strings.HasSuffix(rangeValue, rangeSeparator) {
+			rangeRequestStart, err = strconv.ParseInt(rangeList[0], 10, 64)
 			if err != nil {
 				logger.Printf("error parsing range header %s: %s", rangeList[1], err.Error())
 				return nil, err
 			}
-			rangedRequestEnd = int64(len(body))
+			rangeRequestEnd = int64(len(body))
 			// normal case with START-END
 		} else {
-			rangedRequestStart, _ = strconv.ParseInt(rangeList[0], 10, 64)
-			rangedRequestEnd, _ = strconv.ParseInt(rangeList[1], 10, 64)
+			rangeRequestStart, _ = strconv.ParseInt(rangeList[0], 10, 64)
+			rangeRequestEnd, _ = strconv.ParseInt(rangeList[1], 10, 64)
 		}
-		returnResponse.Body = ioutil.NopCloser(bytes.NewReader(body[rangedRequestStart:rangedRequestEnd]))
+		returnResponse.Body = ioutil.NopCloser(bytes.NewReader(body[rangeRequestStart:rangeRequestEnd]))
 	}
 	return returnResponse, nil
 }
