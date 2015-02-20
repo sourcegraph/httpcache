@@ -77,6 +77,13 @@ func CachedResponse(c Cache, req *http.Request) (resp *http.Response, err error)
 			logger.Print("range type %s not supported", rangeType)
 			return returnResponse, nil
 		}
+		// TODO(uovobw): handle comma-separated list of ranges
+		// in this case we simply split it and only handle the first range provided
+		if strings.Contains(tmp[1], ",") {
+			requestedRanges := strings.Split(tmp[1], ",")
+			logger.Printf("unsupported multiple ranges %s, only fulfilling %s", tmp[1], requestedRanges[0])
+			rangeValue = requestedRanges[0]
+		}
 		// we need to read all the body now, close it, and replace it with another reader
 		// as there is currently no way of "resetting" a Body
 		body, err := ioutil.ReadAll(returnResponse.Body)
@@ -86,7 +93,6 @@ func CachedResponse(c Cache, req *http.Request) (resp *http.Response, err error)
 		}
 		returnResponse.Body.Close()
 		var rangeRequestStart, rangeRequestEnd int64
-		//TODO(uovobw): handle corrupted/nonstandard request header
 		rangeList := strings.Split(rangeValue, rangeSeparator)
 		// the range is in the form -VAL , the wanted range is (end-val)->end
 		if strings.HasPrefix(rangeValue, rangeSeparator) {
@@ -109,6 +115,11 @@ func CachedResponse(c Cache, req *http.Request) (resp *http.Response, err error)
 		} else {
 			rangeRequestStart, _ = strconv.ParseInt(rangeList[0], 10, 64)
 			rangeRequestEnd, _ = strconv.ParseInt(rangeList[1], 10, 64)
+		}
+
+		if rangeRequestStart >= rangeRequestEnd {
+			logger.Printf("received non valid ranges start %d end %d", rangeRequestStart, rangeRequestEnd)
+			return nil, fmt.Errorf("non valid ranges specified in range request")
 		}
 		returnResponse.Body = ioutil.NopCloser(bytes.NewReader(body[rangeRequestStart:rangeRequestEnd]))
 	}
