@@ -113,8 +113,16 @@ func CachedResponse(c Cache, req *http.Request) (resp *http.Response, err error)
 			rangeRequestEnd = int64(len(body))
 			// normal case with START-END
 		} else {
-			rangeRequestStart, _ = strconv.ParseInt(rangeList[0], 10, 64)
-			rangeRequestEnd, _ = strconv.ParseInt(rangeList[1], 10, 64)
+			rangeRequestStart, err = strconv.ParseInt(rangeList[0], 10, 64)
+			if err != nil {
+				logger.Printf("error parsing range start %s: %s", rangeList[0], err.Error())
+				return nil, err
+			}
+			rangeRequestEnd, err = strconv.ParseInt(rangeList[1], 10, 64)
+			if err != nil {
+				logger.Printf("error parsing range end %s: %s", rangeList[1], err.Error())
+				return nil, err
+			}
 		}
 
 		if rangeRequestStart >= rangeRequestEnd {
