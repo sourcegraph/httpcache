@@ -11,7 +11,9 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/http/httputil"
 	"strconv"
@@ -29,6 +31,12 @@ const (
 	rangeSeparator     = "-"
 	rangeTypeSeparator = "="
 )
+
+var logger *log.Logger
+
+func init() {
+	logger = log.New(ioutil.Discard, "httpcache", 0)
+}
 
 // A Cache interface is used by the Transport to store and retrieve responses.
 type Cache interface {
@@ -66,14 +74,14 @@ func CachedResponse(c Cache, req *http.Request) (resp *http.Response, err error)
 		// standard format is bytes=START-END
 		rangetype, rangevalue := tmp[0], tmp[1]
 		if rangetype != "bytes" {
-			fmt.Printf("range type %s not supported\n", rangetype)
+			logger.Print("range type %s not supported", rangetype)
 			return returnResponse, nil
 		}
 		// we need to read all the body now, close it, and replace it with another reader
 		// as there is currently no way of "resetting" a Body
 		body, err := ioutil.ReadAll(returnResponse.Body)
 		if err != nil {
-			fmt.Printf("error reading cached response body: %s\n", err.Error())
+			logger.Print("error reading cached response body: %s", err.Error())
 			return returnResponse, nil
 		}
 		returnResponse.Body.Close()
@@ -83,11 +91,19 @@ func CachedResponse(c Cache, req *http.Request) (resp *http.Response, err error)
 		// the range is in the form -VAL , the wanted range is (end-val)->end
 		if strings.HasPrefix(rangevalue, rangeSeparator) {
 			rangedRequestEnd = int64(len(body))
-			end, _ := strconv.ParseInt(rangeList[1], 10, 64)
+			end, err := strconv.ParseInt(rangeList[1], 10, 64)
+			if err != nil {
+				logger.Printf("error parsing range header %s: %s", rangeList[1], err.Error())
+				return nil, err
+			}
 			rangedRequestStart = rangedRequestEnd - end
 			// the rang is in the form VAL-, the wanted range is val->end
 		} else if strings.HasSuffix(rangevalue, rangeSeparator) {
-			rangedRequestStart, _ = strconv.ParseInt(rangeList[0], 10, 64)
+			rangedRequestStart, err = strconv.ParseInt(rangeList[0], 10, 64)
+			if err != nil {
+				logger.Printf("error parsing range header %s: %s", rangeList[1], err.Error())
+				return nil, err
+			}
 			rangedRequestEnd = int64(len(body))
 			// normal case with START-END
 		} else {
@@ -149,6 +165,12 @@ type Transport struct {
 // provided Cache implementation and MarkCachedResponses set to true
 func NewTransport(c Cache) *Transport {
 	return &Transport{Cache: c, MarkCachedResponses: true}
+}
+
+// SetLogging has the same parameters as the log.New function and replaces the
+// default logger that discards messages
+func (t *Transport) SetLogging(out io.Writer, prefix string, flags int) {
+	logger = log.New(out, prefix, flags)
 }
 
 // Client returns an *http.Client that caches responses.
