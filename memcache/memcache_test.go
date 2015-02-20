@@ -11,19 +11,26 @@ import (
 
 const testServer = "localhost:11211"
 
-func SetUpSuite() {
+func SetUpSuite() bool {
 	conn, err := net.Dial("tcp", testServer)
 	if err != nil {
 		// TODO: rather than skip the test, fall back to a faked memcached server
 		fmt.Sprintf("skipping test; no server running at %s", testServer)
+		return false
 	}
 	conn.Write([]byte("flush_all\r\n")) // flush memcache
 	conn.Close()
+	return true
 }
 
 func TestMemCache(t *testing.T) {
-	SetUpSuite()
+	if !SetUpSuite() {
+		t.SkipNow()
+	}
 	cache := New(testServer)
+	if cache == recover() {
+		t.SkipNow()
+	}
 
 	key := "testKey"
 	_, ok := cache.Get(key)
