@@ -11,7 +11,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -33,10 +32,14 @@ const (
 	rangeTypeSeparator = "="
 )
 
-var logger *log.Logger
+var (
+	logger           *log.Logger
+	bytesRangeRegexp *regexp.Regexp
+)
 
 func init() {
 	logger = log.New(ioutil.Discard, "httpcache", 0)
+	bytesRangeRegexp = regexp.MustCompile("bytes=([0-9]*)-([0-9]*)")
 }
 
 // A Cache interface is used by the Transport to store and retrieve responses.
@@ -91,6 +94,7 @@ func CachedResponse(c Cache, req *http.Request) (resp *http.Response, err error)
 		returnResponse.Body.Close()
 
 		returnResponse.Body = ioutil.NopCloser(bytes.NewReader(body[rangeRequestStart:rangeRequestEnd]))
+		returnResponse.Header.Set("content-range", fmt.Sprintf("bytes %d-%d/%d", rangeRequestStart, rangeRequestEnd, contentLength))
 	}
 	return returnResponse, nil
 }
@@ -106,10 +110,9 @@ func findRanges(r *http.Request, totalLength int64) (start, end int64, err error
 		return -1, -1, fmt.Errorf("non-bytes request %s range type unsupported", rawRange)
 	}
 	if strings.Contains(rawRange, ",") {
-		logger.Printf("unsupported multiple ranges, only fulfilling the first one: %s", rawRange)
+		return -1, -1, fmt.Errorf("unsupported multiple ranges: %s", rawRange)
 	}
-	re := regexp.MustCompile("bytes=([0-9]*)-([0-9]*)")
-	matchedValues := re.FindStringSubmatch(rawRange)[1:]
+	matchedValues := bytesRangeRegexp.FindStringSubmatch(rawRange)[1:]
 	strStart := matchedValues[0]
 	strEnd := matchedValues[1]
 	// range in the form STRSTART-
@@ -190,19 +193,16 @@ func validateRanges(start, end int64, resp *http.Response) (ok bool) {
 		}
 		return true
 		// the response is full content, use the content-length header to verify ranges
-	} else {
-		contentLength, err := strconv.ParseInt(resp.Header.Get("content-length"), 10, 64)
-		if err != nil {
-			logger.Printf("stored response has malformed or invalid content length %s", contentLength)
-			return false
-		}
-		if end > contentLength {
-			return false
-		}
-		return true
 	}
-	logger.Print("we should never ever reach this line")
-	return false
+	contentLength, err := strconv.ParseInt(resp.Header.Get("content-length"), 10, 64)
+	if err != nil {
+		logger.Printf("stored response has malformed or invalid content length %s", contentLength)
+		return false
+	}
+	if end > contentLength {
+		return false
+	}
+	return true
 }
 
 // MemoryCache is an implemtation of Cache that stores responses in an in-memory map.
@@ -257,10 +257,10 @@ func NewTransport(c Cache) *Transport {
 	return &Transport{Cache: c, MarkCachedResponses: true}
 }
 
-// SetLogging has the same parameters as the log.New function and replaces the
-// default logger that discards messages
-func (t *Transport) SetLogging(out io.Writer, prefix string, flags int) {
-	logger = log.New(out, prefix, flags)
+// SetLogger takes a *log.Logger and replaces the current one that discards all messages
+// this method is not thread safe
+func (t *Transport) SetLogger(l *log.Logger) {
+	logger = l
 }
 
 // Client returns an *http.Client that caches responses.

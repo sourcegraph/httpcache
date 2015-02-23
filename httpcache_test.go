@@ -97,6 +97,7 @@ func (s *S) SetUpSuite(c *C) {
 		w.Header().Set("Content-Type", "text/plain")
 		start, end, err := findRanges(r, int64(len(testData)))
 		if err == nil {
+			w.Header().Set("content-range", fmt.Sprintf("bytes %d-%d/%d", start, end, len(testData)))
 			w.Write([]byte(testData)[start:end])
 		} else {
 			w.Write([]byte(testData))
@@ -128,13 +129,13 @@ func (s *S) TearDownTest(c *C) {
 func (s *S) TestSuffixRangedQuery(c *C) {
 	req, err := http.NewRequest("GET", s.server.URL+"/ranged", nil)
 	c.Assert(err, IsNil)
-	//req.Header.Add("Range", "bytes=10-")
 	resp, err := s.client.Do(req)
 	defer resp.Body.Close()
 	c.Assert(err, IsNil)
 	data, err := ioutil.ReadAll(resp.Body)
 	c.Assert(len(data), Equals, 52)
 	c.Assert(string(data), Equals, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
+	c.Assert(resp.Header.Get(XFromCache), Equals, "")
 
 	req.Header.Add("Range", "bytes=10-")
 	resp2, err := s.client.Do(req)
@@ -144,6 +145,7 @@ func (s *S) TestSuffixRangedQuery(c *C) {
 	data2, err := ioutil.ReadAll(resp2.Body)
 	c.Assert(len(data2), Equals, 42)
 	c.Assert(string(data2), Equals, "KLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
+	c.Assert(resp2.Header.Get("content-range"), Equals, "bytes 10-52/52")
 }
 
 func (s *S) TestPrefixRangedQuery(c *C) {
@@ -153,8 +155,11 @@ func (s *S) TestPrefixRangedQuery(c *C) {
 	defer resp.Body.Close()
 	c.Assert(err, IsNil)
 	data, err := ioutil.ReadAll(resp.Body)
+	c.Assert(err, IsNil)
 	c.Assert(len(data), Equals, 52)
 	c.Assert(string(data), Equals, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
+	c.Assert(resp.Header.Get("content-range"), Equals, "")
+	c.Assert(resp.Header.Get(XFromCache), Equals, "")
 
 	req.Header.Add("Range", "bytes=-10")
 	resp2, err := s.client.Do(req)
@@ -162,8 +167,10 @@ func (s *S) TestPrefixRangedQuery(c *C) {
 	c.Assert(resp2.Header.Get(XFromCache), Equals, "1")
 	c.Assert(err, IsNil)
 	data2, err := ioutil.ReadAll(resp2.Body)
+	c.Assert(err, IsNil)
 	c.Assert(len(data2), Equals, 10)
 	c.Assert(string(data2), Equals, "qrstuvwxyz")
+	c.Assert(resp2.Header.Get("content-range"), Equals, "bytes 42-52/52")
 }
 
 func (s *S) TestCompleteRangedQuery(c *C) {
@@ -174,7 +181,9 @@ func (s *S) TestCompleteRangedQuery(c *C) {
 	defer resp.Body.Close()
 	c.Assert(err, IsNil)
 	data, err := ioutil.ReadAll(resp.Body)
+	c.Assert(err, IsNil)
 	c.Assert(len(data), Equals, 10)
+	c.Assert(string(data), Equals, "ABCDEFGHIJ")
 	resp2, err := s.client.Do(req)
 	defer resp2.Body.Close()
 	c.Assert(resp2.Header.Get(XFromCache), Equals, "1")
@@ -182,6 +191,7 @@ func (s *S) TestCompleteRangedQuery(c *C) {
 	data2, err := ioutil.ReadAll(resp2.Body)
 	c.Assert(len(data2), Equals, 10)
 	c.Assert(string(data2), Equals, "ABCDEFGHIJ")
+	c.Assert(resp2.Header.Get("content-range"), Equals, "bytes 0-10/10")
 }
 
 func (s *S) TestPartialSubrangeRangedQuery(c *C) {
@@ -189,21 +199,25 @@ func (s *S) TestPartialSubrangeRangedQuery(c *C) {
 	c.Assert(err, IsNil)
 	req.Header.Add("Range", "bytes=0-10")
 	resp, err := s.client.Do(req)
-	defer resp.Body.Close()
 	c.Assert(err, IsNil)
+	defer resp.Body.Close()
 	data, err := ioutil.ReadAll(resp.Body)
 	c.Assert(len(data), Equals, 10)
+	c.Assert(string(data), Equals, "ABCDEFGHIJ")
+	c.Assert(resp.Header.Get("content-range"), Equals, "bytes 0-10/52")
 
 	req2, err := http.NewRequest("GET", s.server.URL+"/ranged", nil)
 	c.Assert(err, IsNil)
 	req2.Header.Add("Range", "bytes=4-6")
 	resp2, err := s.client.Do(req2)
+	c.Assert(err, IsNil)
 	defer resp2.Body.Close()
 	c.Assert(resp2.Header.Get(XFromCache), Equals, "1")
-	c.Assert(err, IsNil)
 	data2, err := ioutil.ReadAll(resp2.Body)
+	c.Assert(err, IsNil)
 	c.Assert(len(data2), Equals, 2)
 	c.Assert(string(data2), Equals, "EF")
+	c.Assert(resp2.Header.Get("content-range"), Equals, "bytes 4-6/10")
 
 	// test failing subrange outside previously held one
 	req3, err := http.NewRequest("GET", s.server.URL+"/ranged", nil)
@@ -214,8 +228,10 @@ func (s *S) TestPartialSubrangeRangedQuery(c *C) {
 	c.Assert(resp3.Header.Get(XFromCache), Equals, "")
 	c.Assert(err, IsNil)
 	data3, err := ioutil.ReadAll(resp3.Body)
+	c.Assert(err, IsNil)
 	c.Assert(len(data3), Equals, 7)
 	c.Assert(string(data3), Equals, "IJKLMNO")
+	c.Assert(resp3.Header.Get("content-range"), Equals, "bytes 8-15/52")
 }
 
 func (s *S) TestMultipleSubrangeRangedQuery(c *C) {
@@ -223,21 +239,25 @@ func (s *S) TestMultipleSubrangeRangedQuery(c *C) {
 	c.Assert(err, IsNil)
 	req.Header.Add("Range", "bytes=0-10,15-40")
 	resp, err := s.client.Do(req)
-	defer resp.Body.Close()
 	c.Assert(err, IsNil)
+	defer resp.Body.Close()
 	data, err := ioutil.ReadAll(resp.Body)
-	c.Assert(len(data), Equals, 10)
+	c.Assert(err, IsNil)
+	c.Assert(len(data), Equals, 52)
+	c.Assert(string(data), Equals, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
 }
 
 func (s *S) TestGetOnlyIfCachedHit(c *C) {
 	req, err := http.NewRequest("GET", s.server.URL, nil)
 	c.Assert(err, IsNil)
 	resp, err := s.client.Do(req)
+	c.Assert(err, IsNil)
 	defer resp.Body.Close()
 	c.Assert(resp.Header.Get(XFromCache), Equals, "")
 
 	req2, err2 := http.NewRequest("GET", s.server.URL, nil)
 	req2.Header.Add("cache-control", "only-if-cached")
+	c.Assert(err2, IsNil)
 	resp2, err2 := s.client.Do(req)
 	defer resp2.Body.Close()
 	c.Assert(err2, IsNil)
@@ -247,16 +267,18 @@ func (s *S) TestGetOnlyIfCachedHit(c *C) {
 
 func (s *S) TestGetOnlyIfCachedMiss(c *C) {
 	req, err := http.NewRequest("GET", s.server.URL, nil)
+	c.Assert(err, IsNil)
 	req.Header.Add("cache-control", "only-if-cached")
 	resp, err := s.client.Do(req)
-	defer resp.Body.Close()
 	c.Assert(err, IsNil)
+	defer resp.Body.Close()
 	c.Assert(resp.Header.Get(XFromCache), Equals, "")
 	c.Assert(resp.StatusCode, Equals, 504)
 }
 
 func (s *S) TestGetNoStoreRequest(c *C) {
 	req, err := http.NewRequest("GET", s.server.URL, nil)
+	c.Assert(err, IsNil)
 	req.Header.Add("Cache-Control", "no-store")
 	resp, err := s.client.Do(req)
 	defer resp.Body.Close()
@@ -271,6 +293,7 @@ func (s *S) TestGetNoStoreRequest(c *C) {
 
 func (s *S) TestGetNoStoreResponse(c *C) {
 	req, err := http.NewRequest("GET", s.server.URL+"/nostore", nil)
+	c.Assert(err, IsNil)
 	resp, err := s.client.Do(req)
 	defer resp.Body.Close()
 	c.Assert(err, IsNil)
@@ -284,6 +307,7 @@ func (s *S) TestGetNoStoreResponse(c *C) {
 
 func (s *S) TestGetWithEtag(c *C) {
 	req, err := http.NewRequest("GET", s.server.URL+"/etag", nil)
+	c.Assert(err, IsNil)
 	resp, err := s.client.Do(req)
 	defer resp.Body.Close()
 	c.Assert(err, IsNil)
@@ -302,6 +326,7 @@ func (s *S) TestGetWithEtag(c *C) {
 
 func (s *S) TestGetWithLastModified(c *C) {
 	req, err := http.NewRequest("GET", s.server.URL+"/lastmodified", nil)
+	c.Assert(err, IsNil)
 	resp, err := s.client.Do(req)
 	defer resp.Body.Close()
 	c.Assert(err, IsNil)
@@ -315,6 +340,7 @@ func (s *S) TestGetWithLastModified(c *C) {
 
 func (s *S) TestGetWithVary(c *C) {
 	req, err := http.NewRequest("GET", s.server.URL+"/varyaccept", nil)
+	c.Assert(err, IsNil)
 	req.Header.Set("Accept", "text/plain")
 	resp, err := s.client.Do(req)
 	defer resp.Body.Close()
@@ -341,6 +367,7 @@ func (s *S) TestGetWithVary(c *C) {
 
 func (s *S) TestGetWithDoubleVary(c *C) {
 	req, err := http.NewRequest("GET", s.server.URL+"/doublevary", nil)
+	c.Assert(err, IsNil)
 	req.Header.Set("Accept", "text/plain")
 	req.Header.Set("Accept-Language", "da, en-gb;q=0.8, en;q=0.7")
 	resp, err := s.client.Do(req)
@@ -374,6 +401,7 @@ func (s *S) TestGetWith2VaryHeaders(c *C) {
 		acceptLanguage = "da, en-gb;q=0.8, en;q=0.7"
 	)
 	req, err := http.NewRequest("GET", s.server.URL+"/2varyheaders", nil)
+	c.Assert(err, IsNil)
 	req.Header.Set("Accept", accept)
 	req.Header.Set("Accept-Language", acceptLanguage)
 	resp, err := s.client.Do(req)
@@ -419,6 +447,7 @@ func (s *S) TestGetWith2VaryHeaders(c *C) {
 
 func (s *S) TestGetVaryUnused(c *C) {
 	req, err := http.NewRequest("GET", s.server.URL+"/varyunused", nil)
+	c.Assert(err, IsNil)
 	req.Header.Set("Accept", "text/plain")
 	resp, err := s.client.Do(req)
 	defer resp.Body.Close()
@@ -433,6 +462,7 @@ func (s *S) TestGetVaryUnused(c *C) {
 
 func (s *S) TestUpdateFields(c *C) {
 	req, err := http.NewRequest("GET", s.server.URL+"/updatefields", nil)
+	c.Assert(err, IsNil)
 	resp, err := s.client.Do(req)
 	defer resp.Body.Close()
 	c.Assert(err, IsNil)
