@@ -24,7 +24,7 @@ func (c *fakeClock) since(t time.Time) time.Duration {
 	return c.elapsed
 }
 
-func TestAll(t *testing.T) {
+func setup() {
 	s = S{}
 	tp := NewMemoryCacheTransport()
 	client := http.Client{Transport: tp}
@@ -96,73 +96,25 @@ func TestAll(t *testing.T) {
 			w.Write([]byte("Some text content"))
 		}
 	}))
-
-	// testing does not provide tear up/down functions for the suite,
-	// we need to invoke them manually
-	testGetOnlyIfCachedHit(t)
-	tearDownTest()
-	testGetOnlyIfCachedMiss(t)
-	tearDownTest()
-	testGetNoStoreRequest(t)
-	tearDownTest()
-	testGetNoStoreResponse(t)
-	tearDownTest()
-	testGetWithEtag(t)
-	tearDownTest()
-	testGetWithLastModified(t)
-	tearDownTest()
-	testGetWithVary(t)
-	tearDownTest()
-	testGetWithDoubleVary(t)
-	tearDownTest()
-	testGetWith2VaryHeaders(t)
-	tearDownTest()
-	testGetVaryUnused(t)
-	tearDownTest()
-	testUpdateFields(t)
-	tearDownTest()
-	testParseCacheControl(t)
-	tearDownTest()
-	testNoCacheRequestExpiration(t)
-	tearDownTest()
-	testNoCacheResponseExpiration(t)
-	tearDownTest()
-	testReqMustRevalidate(t)
-	tearDownTest()
-	testRespMustRevalidate(t)
-	tearDownTest()
-	testFreshExpiration(t)
-	tearDownTest()
-	testMaxAge(t)
-	tearDownTest()
-	testMaxAgeZero(t)
-	tearDownTest()
-	testBothMaxAge(t)
-	tearDownTest()
-	testMinFreshWithExpires(t)
-	tearDownTest()
-	testEmptyMaxStale(t)
-	tearDownTest()
-	testMaxStaleValue(t)
-	tearDownTest()
-	testGetEndToEndHeaders(t)
-	tearDownTest()
-
-	s.server.Close()
-
 }
 
 func tearDownTest() {
 	s.transport.Cache = NewMemoryCache()
 	clock = &realClock{}
+	s.server.Close()
 }
 
-func testGetOnlyIfCachedHit(t *testing.T) {
+func TestGetOnlyIfCachedHit(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	req, err := http.NewRequest("GET", s.server.URL, nil)
 	if err != nil {
 		t.FailNow()
 	}
 	resp, err := s.client.Do(req)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
 	defer resp.Body.Close()
 	if resp.Header.Get(XFromCache) != "" {
 		t.FailNow()
@@ -177,7 +129,9 @@ func testGetOnlyIfCachedHit(t *testing.T) {
 	}
 }
 
-func testGetOnlyIfCachedMiss(t *testing.T) {
+func TestGetOnlyIfCachedMiss(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	req, err := http.NewRequest("GET", s.server.URL, nil)
 	req.Header.Add("cache-control", "only-if-cached")
 	resp, err := s.client.Do(req)
@@ -187,7 +141,9 @@ func testGetOnlyIfCachedMiss(t *testing.T) {
 	}
 }
 
-func testGetNoStoreRequest(t *testing.T) {
+func TestGetNoStoreRequest(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	req, err := http.NewRequest("GET", s.server.URL, nil)
 	req.Header.Add("Cache-Control", "no-store")
 	resp, err := s.client.Do(req)
@@ -203,7 +159,9 @@ func testGetNoStoreRequest(t *testing.T) {
 	}
 }
 
-func testGetNoStoreResponse(t *testing.T) {
+func TestGetNoStoreResponse(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	req, err := http.NewRequest("GET", s.server.URL+"/nostore", nil)
 	resp, err := s.client.Do(req)
 	defer resp.Body.Close()
@@ -218,7 +176,9 @@ func testGetNoStoreResponse(t *testing.T) {
 	}
 }
 
-func testGetWithEtag(t *testing.T) {
+func TestGetWithEtag(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	req, err := http.NewRequest("GET", s.server.URL+"/etag", nil)
 	resp, err := s.client.Do(req)
 	defer resp.Body.Close()
@@ -242,7 +202,9 @@ func testGetWithEtag(t *testing.T) {
 	}
 }
 
-func testGetWithLastModified(t *testing.T) {
+func TestGetWithLastModified(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	req, err := http.NewRequest("GET", s.server.URL+"/lastmodified", nil)
 	resp, err := s.client.Do(req)
 	defer resp.Body.Close()
@@ -257,7 +219,9 @@ func testGetWithLastModified(t *testing.T) {
 	}
 }
 
-func testGetWithVary(t *testing.T) {
+func TestGetWithVary(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	req, err := http.NewRequest("GET", s.server.URL+"/varyaccept", nil)
 	req.Header.Set("Accept", "text/plain")
 	resp, err := s.client.Do(req)
@@ -287,7 +251,9 @@ func testGetWithVary(t *testing.T) {
 	}
 }
 
-func testGetWithDoubleVary(t *testing.T) {
+func TestGetWithDoubleVary(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	req, err := http.NewRequest("GET", s.server.URL+"/doublevary", nil)
 	req.Header.Set("Accept", "text/plain")
 	req.Header.Set("Accept-Language", "da, en-gb;q=0.8, en;q=0.7")
@@ -318,7 +284,9 @@ func testGetWithDoubleVary(t *testing.T) {
 	}
 }
 
-func testGetWith2VaryHeaders(t *testing.T) {
+func TestGetWith2VaryHeaders(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	// Tests that multiple Vary headers' comma-separated lists are
 	// merged. See https://github.com/gregjones/httpcache/issues/27.
 	const (
@@ -376,7 +344,9 @@ func testGetWith2VaryHeaders(t *testing.T) {
 	}
 }
 
-func testGetVaryUnused(t *testing.T) {
+func TestGetVaryUnused(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	req, err := http.NewRequest("GET", s.server.URL+"/varyunused", nil)
 	req.Header.Set("Accept", "text/plain")
 	resp, err := s.client.Do(req)
@@ -392,7 +362,9 @@ func testGetVaryUnused(t *testing.T) {
 	}
 }
 
-func testUpdateFields(t *testing.T) {
+func TestUpdateFields(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	req, err := http.NewRequest("GET", s.server.URL+"/updatefields", nil)
 	resp, err := s.client.Do(req)
 	defer resp.Body.Close()
@@ -413,7 +385,9 @@ func testUpdateFields(t *testing.T) {
 	}
 }
 
-func testParseCacheControl(t *testing.T) {
+func TestParseCacheControl(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	h := http.Header{}
 	for _ = range parseCacheControl(h) {
 		t.Fatal("cacheControl should be empty")
@@ -437,7 +411,9 @@ func testParseCacheControl(t *testing.T) {
 	}
 }
 
-func testNoCacheRequestExpiration(t *testing.T) {
+func TestNoCacheRequestExpiration(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	respHeaders := http.Header{}
 	respHeaders.Set("Cache-Control", "max-age=7200")
 	reqHeaders := http.Header{}
@@ -448,7 +424,9 @@ func testNoCacheRequestExpiration(t *testing.T) {
 	}
 }
 
-func testNoCacheResponseExpiration(t *testing.T) {
+func TestNoCacheResponseExpiration(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	respHeaders := http.Header{}
 	respHeaders.Set("Cache-Control", "no-cache")
 	respHeaders.Set("Expires", "Wed, 19 Apr 3000 11:43:00 GMT")
@@ -459,7 +437,9 @@ func testNoCacheResponseExpiration(t *testing.T) {
 	}
 }
 
-func testReqMustRevalidate(t *testing.T) {
+func TestReqMustRevalidate(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	// not paying attention to request setting max-stale means never returning stale
 	// responses, so always acting as if must-revalidate is set
 	respHeaders := http.Header{}
@@ -471,7 +451,9 @@ func testReqMustRevalidate(t *testing.T) {
 	}
 }
 
-func testRespMustRevalidate(t *testing.T) {
+func TestRespMustRevalidate(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	respHeaders := http.Header{}
 	respHeaders.Set("Cache-Control", "must-revalidate")
 	reqHeaders := http.Header{}
@@ -481,7 +463,9 @@ func testRespMustRevalidate(t *testing.T) {
 	}
 }
 
-func testFreshExpiration(t *testing.T) {
+func TestFreshExpiration(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	now := time.Now()
 	respHeaders := http.Header{}
 	respHeaders.Set("date", now.Format(time.RFC1123))
@@ -498,7 +482,9 @@ func testFreshExpiration(t *testing.T) {
 	}
 }
 
-func testMaxAge(t *testing.T) {
+func TestMaxAge(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	now := time.Now()
 	respHeaders := http.Header{}
 	respHeaders.Set("date", now.Format(time.RFC1123))
@@ -515,7 +501,9 @@ func testMaxAge(t *testing.T) {
 	}
 }
 
-func testMaxAgeZero(t *testing.T) {
+func TestMaxAgeZero(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	now := time.Now()
 	respHeaders := http.Header{}
 	respHeaders.Set("date", now.Format(time.RFC1123))
@@ -527,7 +515,9 @@ func testMaxAgeZero(t *testing.T) {
 	}
 }
 
-func testBothMaxAge(t *testing.T) {
+func TestBothMaxAge(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	now := time.Now()
 	respHeaders := http.Header{}
 	respHeaders.Set("date", now.Format(time.RFC1123))
@@ -540,7 +530,9 @@ func testBothMaxAge(t *testing.T) {
 	}
 }
 
-func testMinFreshWithExpires(t *testing.T) {
+func TestMinFreshWithExpires(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	now := time.Now()
 	respHeaders := http.Header{}
 	respHeaders.Set("date", now.Format(time.RFC1123))
@@ -559,7 +551,9 @@ func testMinFreshWithExpires(t *testing.T) {
 	}
 }
 
-func testEmptyMaxStale(t *testing.T) {
+func TestEmptyMaxStale(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	now := time.Now()
 	respHeaders := http.Header{}
 	respHeaders.Set("date", now.Format(time.RFC1123))
@@ -581,7 +575,9 @@ func testEmptyMaxStale(t *testing.T) {
 	}
 }
 
-func testMaxStaleValue(t *testing.T) {
+func TestMaxStaleValue(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	now := time.Now()
 	respHeaders := http.Header{}
 	respHeaders.Set("date", now.Format(time.RFC1123))
@@ -617,7 +613,8 @@ func containsHeader(headers []string, header string) bool {
 	return false
 }
 
-func testGetEndToEndHeaders(t *testing.T) {
+func TestGetEndToEndHeaders(t *testing.T) {
+	setup()
 	var (
 		headers http.Header
 		end2end []string
@@ -662,4 +659,5 @@ func testGetEndToEndHeaders(t *testing.T) {
 	if len(end2end) != 0 {
 		t.FailNow()
 	}
+	tearDownTest()
 }
