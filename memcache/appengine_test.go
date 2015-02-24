@@ -7,20 +7,12 @@ import (
 	"testing"
 
 	"appengine/aetest"
-
-	. "gopkg.in/check.v1"
 )
 
-func Test(t *testing.T) { TestingT(t) }
-
-type S struct{}
-
-var _ = Suite(&S{})
-
-func (s *S) Test(c *C) {
+func TestAppEngine(t *testing.T) {
 	ctx, err := aetest.NewContext(nil)
 	if err != nil {
-		c.Fatal(err)
+		t.Fatal(err)
 	}
 	defer ctx.Close()
 
@@ -29,17 +21,25 @@ func (s *S) Test(c *C) {
 	key := "testKey"
 	_, ok := cache.Get(key)
 
-	c.Assert(ok, Equals, false)
+	if ok != false {
+		t.Fatal("could retrieve non existing key")
+	}
 
 	val := []byte("some bytes")
 	cache.Set(key, val)
 
 	retVal, ok := cache.Get(key)
-	c.Assert(ok, Equals, true)
-	c.Assert(bytes.Equal(retVal, val), Equals, true)
+	if ok != true {
+		t.Fatal("could not retrieve key i just added")
+	}
+	if bytes.Equal(retVal, val) != true {
+		t.Fatal("retrieved something different from what i put in")
+	}
 
 	cache.Delete(key)
 
 	_, ok = cache.Get(key)
-	c.Assert(ok, Equals, false)
+	if ok != false {
+		t.Fatal("retrieved deleted key")
+	}
 }

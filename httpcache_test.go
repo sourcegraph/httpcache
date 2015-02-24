@@ -8,19 +8,15 @@ import (
 	"strconv"
 	"testing"
 	"time"
-
-	. "gopkg.in/check.v1"
 )
-
-var _ = fmt.Print
-
-func Test(t *testing.T) { TestingT(t) }
 
 type S struct {
 	server    *httptest.Server
 	client    http.Client
 	transport *Transport
 }
+
+var s S
 
 type fakeClock struct {
 	elapsed time.Duration
@@ -30,12 +26,11 @@ func (c *fakeClock) since(t time.Time) time.Duration {
 	return c.elapsed
 }
 
-var _ = Suite(&S{})
-
-func (s *S) SetUpSuite(c *C) {
-	t := NewMemoryCacheTransport()
-	client := http.Client{Transport: t}
-	s.transport = t
+func setup() {
+	s = S{}
+	tp := NewMemoryCacheTransport()
+	client := http.Client{Transport: tp}
+	s.transport = tp
 	s.client = client
 
 	mux := http.NewServeMux()
@@ -117,283 +112,397 @@ func (s *S) SetUpSuite(c *C) {
 	}))
 }
 
-func (s *S) TearDownSuite(c *C) {
+func tearDownTest() {
+	s.transport.Cache = NewMemoryCache()
+	clock = &realClock{}
 	s.server.Close()
 }
 
-func (s *S) TearDownTest(c *C) {
-	s.transport.Cache = NewMemoryCache()
-	clock = &realClock{}
-}
-
-func (s *S) TestSuffixRangedQuery(c *C) {
+func TestSuffixRangedQuery(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	req, err := http.NewRequest("GET", s.server.URL+"/ranged", nil)
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.FailNow()
+	}
 	resp, err := s.client.Do(req)
 	defer resp.Body.Close()
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.FailNow()
+	}
 	data, err := ioutil.ReadAll(resp.Body)
-	c.Assert(len(data), Equals, 52)
-	c.Assert(string(data), Equals, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
-	c.Assert(resp.Header.Get(XFromCache), Equals, "")
+	if len(data) != 52 || string(data) != "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz" || resp.Header.Get(XFromCache) != "" {
+		t.FailNow()
+	}
 
 	req.Header.Add("Range", "bytes=10-")
 	resp2, err := s.client.Do(req)
 	defer resp2.Body.Close()
-	c.Assert(resp2.Header.Get(XFromCache), Equals, "1")
-	c.Assert(err, IsNil)
+	if err != nil || resp2.Header.Get(XFromCache) != "1" {
+		t.FailNow()
+	}
 	data2, err := ioutil.ReadAll(resp2.Body)
-	c.Assert(len(data2), Equals, 42)
-	c.Assert(string(data2), Equals, "KLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
-	c.Assert(resp2.Header.Get("content-range"), Equals, "bytes 10-52/52")
+	if len(data2) != 42 || string(data2) != "KLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz" || resp2.Header.Get("content-range") != "bytes 10-52/52" {
+		t.FailNow()
+	}
 }
 
-func (s *S) TestPrefixRangedQuery(c *C) {
+func TestPrefixRangedQuery(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	req, err := http.NewRequest("GET", s.server.URL+"/ranged", nil)
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.FailNow()
+	}
 	resp, err := s.client.Do(req)
 	defer resp.Body.Close()
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.FailNow()
+	}
 	data, err := ioutil.ReadAll(resp.Body)
-	c.Assert(err, IsNil)
-	c.Assert(len(data), Equals, 52)
-	c.Assert(string(data), Equals, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
-	c.Assert(resp.Header.Get("content-range"), Equals, "")
-	c.Assert(resp.Header.Get(XFromCache), Equals, "")
+	failedTest := err != nil ||
+		len(data) != 52 ||
+		string(data) != "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz" ||
+		resp.Header.Get("content-range") != "" ||
+		resp.Header.Get(XFromCache) != ""
+	if failedTest {
+		t.FailNow()
+	}
 
 	req.Header.Add("Range", "bytes=-10")
 	resp2, err := s.client.Do(req)
 	defer resp2.Body.Close()
-	c.Assert(resp2.Header.Get(XFromCache), Equals, "1")
-	c.Assert(err, IsNil)
+	if err != nil || resp2.Header.Get(XFromCache) != "1" {
+		t.FailNow()
+	}
 	data2, err := ioutil.ReadAll(resp2.Body)
-	c.Assert(err, IsNil)
-	c.Assert(len(data2), Equals, 10)
-	c.Assert(string(data2), Equals, "qrstuvwxyz")
-	c.Assert(resp2.Header.Get("content-range"), Equals, "bytes 42-52/52")
+	failedTest = err != nil ||
+		len(data2) != 10 ||
+		string(data2) != "qrstuvwxyz" ||
+		resp2.Header.Get("content-range") != "bytes 42-52/52"
+	if failedTest {
+		t.FailNow()
+	}
 }
 
-func (s *S) TestCompleteRangedQuery(c *C) {
+func TestCompleteRangedQuery(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	req, err := http.NewRequest("GET", s.server.URL+"/ranged", nil)
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.FailNow()
+	}
 	req.Header.Add("Range", "bytes=0-10")
 	resp, err := s.client.Do(req)
 	defer resp.Body.Close()
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.FailNow()
+	}
 	data, err := ioutil.ReadAll(resp.Body)
-	c.Assert(err, IsNil)
-	c.Assert(len(data), Equals, 10)
-	c.Assert(string(data), Equals, "ABCDEFGHIJ")
+	if err != nil || len(data) != 10 || string(data) != "ABCDEFGHIJ" {
+		t.FailNow()
+	}
 	resp2, err := s.client.Do(req)
 	defer resp2.Body.Close()
-	c.Assert(resp2.Header.Get(XFromCache), Equals, "1")
-	c.Assert(err, IsNil)
+	if err != nil || resp2.Header.Get(XFromCache) != "1" {
+		t.FailNow()
+	}
 	data2, err := ioutil.ReadAll(resp2.Body)
-	c.Assert(len(data2), Equals, 10)
-	c.Assert(string(data2), Equals, "ABCDEFGHIJ")
-	c.Assert(resp2.Header.Get("content-range"), Equals, "bytes 0-10/10")
+	if len(data2) != 10 || string(data2) != "ABCDEFGHIJ" || resp2.Header.Get("content-range") != "bytes 0-10/10" {
+		t.FailNow()
+	}
 }
 
-func (s *S) TestPartialSubrangeRangedQuery(c *C) {
+func TestPartialSubrangeRangedQuery(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	req, err := http.NewRequest("GET", s.server.URL+"/ranged", nil)
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.FailNow()
+	}
 	req.Header.Add("Range", "bytes=0-10")
 	resp, err := s.client.Do(req)
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.FailNow()
+	}
 	defer resp.Body.Close()
 	data, err := ioutil.ReadAll(resp.Body)
-	c.Assert(len(data), Equals, 10)
-	c.Assert(string(data), Equals, "ABCDEFGHIJ")
-	c.Assert(resp.Header.Get("content-range"), Equals, "bytes 0-10/52")
+	if len(data) != 10 || string(data) != "ABCDEFGHIJ" || resp.Header.Get("content-range") != "bytes 0-10/52" {
+		t.FailNow()
+	}
 
 	req2, err := http.NewRequest("GET", s.server.URL+"/ranged", nil)
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.FailNow()
+	}
 	req2.Header.Add("Range", "bytes=4-6")
 	resp2, err := s.client.Do(req2)
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.FailNow()
+	}
 	defer resp2.Body.Close()
-	c.Assert(resp2.Header.Get(XFromCache), Equals, "1")
+	if resp2.Header.Get(XFromCache) != "1" {
+		t.FailNow()
+	}
 	data2, err := ioutil.ReadAll(resp2.Body)
-	c.Assert(err, IsNil)
-	c.Assert(len(data2), Equals, 2)
-	c.Assert(string(data2), Equals, "EF")
-	c.Assert(resp2.Header.Get("content-range"), Equals, "bytes 4-6/10")
+	failedTest := err != nil ||
+		len(data2) != 2 ||
+		string(data2) != "EF" ||
+		resp2.Header.Get("content-range") != "bytes 4-6/10"
+	if failedTest {
+		t.FailNow()
+	}
 
 	// test failing subrange outside previously held one
 	req3, err := http.NewRequest("GET", s.server.URL+"/ranged", nil)
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.FailNow()
+	}
 	req3.Header.Add("Range", "bytes=8-15")
 	resp3, err := s.client.Do(req3)
 	defer resp3.Body.Close()
-	c.Assert(resp3.Header.Get(XFromCache), Equals, "")
-	c.Assert(err, IsNil)
+	if err != nil || resp3.Header.Get(XFromCache) != "" {
+		t.FailNow()
+	}
 	data3, err := ioutil.ReadAll(resp3.Body)
-	c.Assert(err, IsNil)
-	c.Assert(len(data3), Equals, 7)
-	c.Assert(string(data3), Equals, "IJKLMNO")
-	c.Assert(resp3.Header.Get("content-range"), Equals, "bytes 8-15/52")
+	failedTest = err != nil ||
+		len(data3) != 7 ||
+		string(data3) != "IJKLMNO" ||
+		resp3.Header.Get("content-range") != "bytes 8-15/52"
+	if failedTest {
+		t.FailNow()
+	}
 }
 
-func (s *S) TestMultipleSubrangeRangedQuery(c *C) {
+func TestMultipleSubrangeRangedQuery(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	req, err := http.NewRequest("GET", s.server.URL+"/ranged", nil)
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.FailNow()
+	}
 	req.Header.Add("Range", "bytes=0-10,15-40")
 	resp, err := s.client.Do(req)
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.FailNow()
+	}
 	defer resp.Body.Close()
 	data, err := ioutil.ReadAll(resp.Body)
-	c.Assert(err, IsNil)
-	c.Assert(len(data), Equals, 52)
-	c.Assert(string(data), Equals, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
+	failedTest := err != nil ||
+		len(data) != 52 ||
+		string(data) != "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+	if failedTest {
+		t.FailNow()
+	}
 }
 
-func (s *S) TestGetOnlyIfCachedHit(c *C) {
+func TestGetOnlyIfCachedHit(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	req, err := http.NewRequest("GET", s.server.URL, nil)
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.FailNow()
+	}
 	resp, err := s.client.Do(req)
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
 	defer resp.Body.Close()
-	c.Assert(resp.Header.Get(XFromCache), Equals, "")
+	if resp.Header.Get(XFromCache) != "" {
+		t.FailNow()
+	}
 
 	req2, err2 := http.NewRequest("GET", s.server.URL, nil)
 	req2.Header.Add("cache-control", "only-if-cached")
-	c.Assert(err2, IsNil)
+	if err2 != nil {
+		t.FailNow()
+	}
 	resp2, err2 := s.client.Do(req)
 	defer resp2.Body.Close()
-	c.Assert(err2, IsNil)
-	c.Assert(resp2.Header.Get(XFromCache), Equals, "1")
-	c.Assert(resp2.StatusCode, Equals, 200)
+	if err2 != nil || resp2.Header.Get(XFromCache) != "1" || resp2.StatusCode != http.StatusOK {
+		t.FailNow()
+	}
 }
 
-func (s *S) TestGetOnlyIfCachedMiss(c *C) {
+func TestGetOnlyIfCachedMiss(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	req, err := http.NewRequest("GET", s.server.URL, nil)
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.FailNow()
+	}
 	req.Header.Add("cache-control", "only-if-cached")
 	resp, err := s.client.Do(req)
-	c.Assert(err, IsNil)
 	defer resp.Body.Close()
-	c.Assert(resp.Header.Get(XFromCache), Equals, "")
-	c.Assert(resp.StatusCode, Equals, 504)
+	if err != nil || resp.Header.Get(XFromCache) != "" || resp.StatusCode != 504 {
+		t.FailNow()
+	}
 }
 
-func (s *S) TestGetNoStoreRequest(c *C) {
+func TestGetNoStoreRequest(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	req, err := http.NewRequest("GET", s.server.URL, nil)
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.FailNow()
+	}
 	req.Header.Add("Cache-Control", "no-store")
 	resp, err := s.client.Do(req)
 	defer resp.Body.Close()
-	c.Assert(err, IsNil)
-	c.Assert(resp.Header.Get(XFromCache), Equals, "")
+	if err != nil || resp.Header.Get(XFromCache) != "" {
+		t.FailNow()
+	}
 
 	resp2, err2 := s.client.Do(req)
 	defer resp2.Body.Close()
-	c.Assert(err2, IsNil)
-	c.Assert(resp2.Header.Get(XFromCache), Equals, "")
+	if err2 != nil || resp2.Header.Get(XFromCache) != "" {
+		t.FailNow()
+	}
 }
 
-func (s *S) TestGetNoStoreResponse(c *C) {
+func TestGetNoStoreResponse(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	req, err := http.NewRequest("GET", s.server.URL+"/nostore", nil)
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.FailNow()
+	}
 	resp, err := s.client.Do(req)
 	defer resp.Body.Close()
-	c.Assert(err, IsNil)
-	c.Assert(resp.Header.Get(XFromCache), Equals, "")
+	if err != nil || resp.Header.Get(XFromCache) != "" {
+		t.FailNow()
+	}
 
 	resp2, err2 := s.client.Do(req)
 	defer resp2.Body.Close()
-	c.Assert(err2, IsNil)
-	c.Assert(resp2.Header.Get(XFromCache), Equals, "")
+	if err2 != nil || resp2.Header.Get(XFromCache) != "" {
+		t.FailNow()
+	}
 }
 
-func (s *S) TestGetWithEtag(c *C) {
+func TestGetWithEtag(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	req, err := http.NewRequest("GET", s.server.URL+"/etag", nil)
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.FailNow()
+	}
 	resp, err := s.client.Do(req)
 	defer resp.Body.Close()
-	c.Assert(err, IsNil)
-	c.Assert(resp.Header.Get(XFromCache), Equals, "")
+	if err != nil || resp.Header.Get(XFromCache) != "" {
+		t.FailNow()
+	}
 
 	resp2, err2 := s.client.Do(req)
 	defer resp2.Body.Close()
-	c.Assert(err2, IsNil)
-	c.Assert(resp2.Header.Get(XFromCache), Equals, "1")
-
+	if err2 != nil || resp2.Header.Get(XFromCache) != "1" {
+		t.FailNow()
+	}
 	// additional assertions to verify that 304 response is converted properly
-	c.Assert(resp2.Status, Equals, "200 OK")
+	if resp2.Status != "200 OK" {
+		t.FailNow()
+	}
+
 	_, ok := resp2.Header["Connection"]
-	c.Assert(ok, Equals, false)
+	if ok {
+		t.FailNow()
+	}
 }
 
-func (s *S) TestGetWithLastModified(c *C) {
+func TestGetWithLastModified(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	req, err := http.NewRequest("GET", s.server.URL+"/lastmodified", nil)
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.FailNow()
+	}
 	resp, err := s.client.Do(req)
 	defer resp.Body.Close()
-	c.Assert(err, IsNil)
-	c.Assert(resp.Header.Get(XFromCache), Equals, "")
+	if err != nil || resp.Header.Get(XFromCache) != "" {
+		t.FailNow()
+	}
 
 	resp2, err2 := s.client.Do(req)
 	defer resp2.Body.Close()
-	c.Assert(err2, IsNil)
-	c.Assert(resp2.Header.Get(XFromCache), Equals, "1")
+	if err2 != nil || resp2.Header.Get(XFromCache) != "1" {
+		t.FailNow()
+	}
 }
 
-func (s *S) TestGetWithVary(c *C) {
+func TestGetWithVary(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	req, err := http.NewRequest("GET", s.server.URL+"/varyaccept", nil)
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.FailNow()
+	}
 	req.Header.Set("Accept", "text/plain")
 	resp, err := s.client.Do(req)
 	defer resp.Body.Close()
-	c.Assert(err, IsNil)
-	c.Assert(resp.Header.Get("Vary"), Equals, "Accept")
+	if err != nil || resp.Header.Get("Vary") != "Accept" {
+		t.FailNow()
+	}
 
 	resp2, err2 := s.client.Do(req)
 	defer resp2.Body.Close()
-	c.Assert(err2, IsNil)
-	c.Assert(resp2.Header.Get(XFromCache), Equals, "1")
+	if err2 != nil || resp2.Header.Get(XFromCache) != "1" {
+		t.FailNow()
+	}
 
 	req.Header.Set("Accept", "text/html")
 	resp3, err3 := s.client.Do(req)
 	defer resp3.Body.Close()
-	c.Assert(err3, IsNil)
-	c.Assert(resp3.Header.Get(XFromCache), Equals, "")
+	if err3 != nil || resp3.Header.Get(XFromCache) != "" {
+		t.FailNow()
+	}
 
 	req.Header.Set("Accept", "")
 	resp4, err4 := s.client.Do(req)
 	defer resp4.Body.Close()
-	c.Assert(err4, IsNil)
-	c.Assert(resp4.Header.Get(XFromCache), Equals, "")
+	if err4 != nil || resp4.Header.Get(XFromCache) != "" {
+		t.FailNow()
+	}
 }
 
-func (s *S) TestGetWithDoubleVary(c *C) {
+func TestGetWithDoubleVary(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	req, err := http.NewRequest("GET", s.server.URL+"/doublevary", nil)
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.FailNow()
+	}
 	req.Header.Set("Accept", "text/plain")
 	req.Header.Set("Accept-Language", "da, en-gb;q=0.8, en;q=0.7")
 	resp, err := s.client.Do(req)
 	defer resp.Body.Close()
-	c.Assert(err, IsNil)
-	c.Assert(resp.Header.Get("Vary"), Not(Equals), "")
+	if err != nil || resp.Header.Get("Vary") == "" {
+		t.FailNow()
+	}
 
 	resp2, err2 := s.client.Do(req)
 	defer resp2.Body.Close()
-	c.Assert(err2, IsNil)
-	c.Assert(resp2.Header.Get(XFromCache), Equals, "1")
+	if err2 != nil || resp2.Header.Get(XFromCache) != "1" {
+		t.FailNow()
+	}
 
 	req.Header.Set("Accept-Language", "")
 	resp3, err3 := s.client.Do(req)
 	defer resp3.Body.Close()
-	c.Assert(err3, IsNil)
-	c.Assert(resp3.Header.Get(XFromCache), Equals, "")
+	if err3 != nil || resp3.Header.Get(XFromCache) != "" {
+		t.FailNow()
+	}
 
 	req.Header.Set("Accept-Language", "da")
 	resp4, err4 := s.client.Do(req)
 	defer resp4.Body.Close()
-	c.Assert(err4, IsNil)
-	c.Assert(resp4.Header.Get(XFromCache), Equals, "")
+	if err4 != nil || resp4.Header.Get(XFromCache) != "" {
+		t.FailNow()
+	}
 }
 
-func (s *S) TestGetWith2VaryHeaders(c *C) {
+func TestGetWith2VaryHeaders(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	// Tests that multiple Vary headers' comma-separated lists are
 	// merged. See https://github.com/gregjones/httpcache/issues/27.
 	const (
@@ -401,176 +510,239 @@ func (s *S) TestGetWith2VaryHeaders(c *C) {
 		acceptLanguage = "da, en-gb;q=0.8, en;q=0.7"
 	)
 	req, err := http.NewRequest("GET", s.server.URL+"/2varyheaders", nil)
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.FailNow()
+	}
 	req.Header.Set("Accept", accept)
 	req.Header.Set("Accept-Language", acceptLanguage)
 	resp, err := s.client.Do(req)
 	defer resp.Body.Close()
-	c.Assert(err, IsNil)
-	c.Assert(resp.Header.Get("Vary"), Not(Equals), "")
+	if err != nil || resp.Header.Get("Vary") == "" {
+		t.FailNow()
+	}
 
 	resp2, err2 := s.client.Do(req)
 	defer resp2.Body.Close()
-	c.Assert(err2, IsNil)
-	c.Assert(resp2.Header.Get(XFromCache), Equals, "1")
+	if err2 != nil || resp2.Header.Get(XFromCache) != "1" {
+		t.FailNow()
+	}
 
 	req.Header.Set("Accept-Language", "")
 	resp3, err3 := s.client.Do(req)
 	defer resp3.Body.Close()
-	c.Assert(err3, IsNil)
-	c.Assert(resp3.Header.Get(XFromCache), Equals, "")
+	if err3 != nil || resp3.Header.Get(XFromCache) != "" {
+		t.FailNow()
+	}
 
 	req.Header.Set("Accept-Language", "da")
 	resp4, err4 := s.client.Do(req)
 	defer resp4.Body.Close()
-	c.Assert(err4, IsNil)
-	c.Assert(resp4.Header.Get(XFromCache), Equals, "")
+	if err4 != nil || resp4.Header.Get(XFromCache) != "" {
+		t.FailNow()
+	}
 
 	req.Header.Set("Accept-Language", acceptLanguage)
 	req.Header.Set("Accept", "")
 	resp5, err5 := s.client.Do(req)
 	defer resp5.Body.Close()
-	c.Assert(err5, IsNil)
-	c.Assert(resp5.Header.Get(XFromCache), Equals, "")
+	if err5 != nil || resp5.Header.Get(XFromCache) != "" {
+		t.FailNow()
+	}
 
 	req.Header.Set("Accept", "image/png")
 	resp6, err6 := s.client.Do(req)
 	defer resp6.Body.Close()
-	c.Assert(err6, IsNil)
-	c.Assert(resp6.Header.Get(XFromCache), Equals, "")
+	if err6 != nil || resp6.Header.Get(XFromCache) != "" {
+		t.FailNow()
+	}
 
 	resp7, err7 := s.client.Do(req)
 	defer resp7.Body.Close()
-	c.Assert(err7, IsNil)
-	c.Assert(resp7.Header.Get(XFromCache), Equals, "1")
+	if err7 != nil || resp7.Header.Get(XFromCache) != "1" {
+		t.FailNow()
+	}
 }
 
-func (s *S) TestGetVaryUnused(c *C) {
+func TestGetVaryUnused(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	req, err := http.NewRequest("GET", s.server.URL+"/varyunused", nil)
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.FailNow()
+	}
 	req.Header.Set("Accept", "text/plain")
 	resp, err := s.client.Do(req)
 	defer resp.Body.Close()
-	c.Assert(err, IsNil)
-	c.Assert(resp.Header.Get("Vary"), Not(Equals), "")
+	if err != nil || resp.Header.Get("Vary") == "" {
+		t.FailNow()
+	}
 
 	resp2, err2 := s.client.Do(req)
 	defer resp2.Body.Close()
-	c.Assert(err2, IsNil)
-	c.Assert(resp2.Header.Get(XFromCache), Equals, "1")
+	if err2 != nil || resp2.Header.Get(XFromCache) != "1" {
+		t.FailNow()
+	}
 }
 
-func (s *S) TestUpdateFields(c *C) {
+func TestUpdateFields(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	req, err := http.NewRequest("GET", s.server.URL+"/updatefields", nil)
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.FailNow()
+	}
 	resp, err := s.client.Do(req)
 	defer resp.Body.Close()
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.FailNow()
+	}
 	counter := resp.Header.Get("x-counter")
 
 	resp2, err2 := s.client.Do(req)
 	defer resp2.Body.Close()
-	c.Assert(err2, IsNil)
-	c.Assert(resp2.Header.Get(XFromCache), Equals, "1")
+	if err2 != nil || resp2.Header.Get(XFromCache) != "1" {
+		t.FailNow()
+	}
 	counter2 := resp2.Header.Get("x-counter")
 
-	c.Assert(counter, Not(Equals), counter2)
+	if counter == counter2 {
+		t.FailNow()
+	}
 }
 
-func (s *S) TestParseCacheControl(c *C) {
+func TestParseCacheControl(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	h := http.Header{}
 	for _ = range parseCacheControl(h) {
-		c.Fatal("cacheControl should be empty")
+		t.Fatal("cacheControl should be empty")
 	}
 
 	h.Set("cache-control", "no-cache")
 	cc := parseCacheControl(h)
 	if _, ok := cc["foo"]; ok {
-		c.Error("Value shouldn't exist")
+		t.Error("Value shouldn't exist")
 	}
 	if nocache, ok := cc["no-cache"]; ok {
-		c.Assert(nocache, Equals, "")
+		if nocache != "" {
+			t.FailNow()
+		}
 	}
 
 	h.Set("cache-control", "no-cache, max-age=3600")
 	cc = parseCacheControl(h)
-	c.Assert(cc["no-cache"], Equals, "")
-	c.Assert(cc["max-age"], Equals, "3600")
+	if cc["no-cache"] != "" || cc["max-age"] != "3600" {
+		t.FailNow()
+	}
 }
 
-func (s *S) TestNoCacheRequestExpiration(c *C) {
+func TestNoCacheRequestExpiration(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	respHeaders := http.Header{}
 	respHeaders.Set("Cache-Control", "max-age=7200")
 	reqHeaders := http.Header{}
 	reqHeaders.Set("Cache-Control", "no-cache")
 
-	c.Assert(getFreshness(respHeaders, reqHeaders), Equals, transparent)
+	if getFreshness(respHeaders, reqHeaders) != transparent {
+		t.FailNow()
+	}
 }
 
-func (s *S) TestNoCacheResponseExpiration(c *C) {
+func TestNoCacheResponseExpiration(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	respHeaders := http.Header{}
 	respHeaders.Set("Cache-Control", "no-cache")
 	respHeaders.Set("Expires", "Wed, 19 Apr 3000 11:43:00 GMT")
 	reqHeaders := http.Header{}
 
-	c.Assert(getFreshness(respHeaders, reqHeaders), Equals, stale)
+	if getFreshness(respHeaders, reqHeaders) != stale {
+		t.FailNow()
+	}
 }
 
-func (s *S) TestReqMustRevalidate(c *C) {
+func TestReqMustRevalidate(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	// not paying attention to request setting max-stale means never returning stale
 	// responses, so always acting as if must-revalidate is set
 	respHeaders := http.Header{}
 	reqHeaders := http.Header{}
 	reqHeaders.Set("Cache-Control", "must-revalidate")
 
-	c.Assert(getFreshness(respHeaders, reqHeaders), Equals, stale)
+	if getFreshness(respHeaders, reqHeaders) != stale {
+		t.FailNow()
+	}
 }
 
-func (s *S) TestRespMustRevalidate(c *C) {
+func TestRespMustRevalidate(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	respHeaders := http.Header{}
 	respHeaders.Set("Cache-Control", "must-revalidate")
 	reqHeaders := http.Header{}
 
-	c.Assert(getFreshness(respHeaders, reqHeaders), Equals, stale)
+	if getFreshness(respHeaders, reqHeaders) != stale {
+		t.FailNow()
+	}
 }
 
-func (s *S) TestFreshExpiration(c *C) {
+func TestFreshExpiration(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	now := time.Now()
 	respHeaders := http.Header{}
 	respHeaders.Set("date", now.Format(time.RFC1123))
 	respHeaders.Set("expires", now.Add(time.Duration(2)*time.Second).Format(time.RFC1123))
 
 	reqHeaders := http.Header{}
-	c.Assert(getFreshness(respHeaders, reqHeaders), Equals, fresh)
+	if getFreshness(respHeaders, reqHeaders) != fresh {
+		t.FailNow()
+	}
 
 	clock = &fakeClock{elapsed: 3 * time.Second}
-	c.Assert(getFreshness(respHeaders, reqHeaders), Equals, stale)
+	if getFreshness(respHeaders, reqHeaders) != stale {
+		t.FailNow()
+	}
 }
 
-func (s *S) TestMaxAge(c *C) {
+func TestMaxAge(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	now := time.Now()
 	respHeaders := http.Header{}
 	respHeaders.Set("date", now.Format(time.RFC1123))
 	respHeaders.Set("cache-control", "max-age=2")
 
 	reqHeaders := http.Header{}
-	c.Assert(getFreshness(respHeaders, reqHeaders), Equals, fresh)
+	if getFreshness(respHeaders, reqHeaders) != fresh {
+		t.FailNow()
+	}
 
 	clock = &fakeClock{elapsed: 3 * time.Second}
-	c.Assert(getFreshness(respHeaders, reqHeaders), Equals, stale)
+	if getFreshness(respHeaders, reqHeaders) != stale {
+		t.FailNow()
+	}
 }
 
-func (s *S) TestMaxAgeZero(c *C) {
+func TestMaxAgeZero(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	now := time.Now()
 	respHeaders := http.Header{}
 	respHeaders.Set("date", now.Format(time.RFC1123))
 	respHeaders.Set("cache-control", "max-age=0")
 
 	reqHeaders := http.Header{}
-	c.Assert(getFreshness(respHeaders, reqHeaders), Equals, stale)
+	if getFreshness(respHeaders, reqHeaders) != stale {
+		t.FailNow()
+	}
 }
 
-func (s *S) TestBothMaxAge(c *C) {
+func TestBothMaxAge(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	now := time.Now()
 	respHeaders := http.Header{}
 	respHeaders.Set("date", now.Format(time.RFC1123))
@@ -578,10 +750,14 @@ func (s *S) TestBothMaxAge(c *C) {
 
 	reqHeaders := http.Header{}
 	reqHeaders.Set("cache-control", "max-age=0")
-	c.Assert(getFreshness(respHeaders, reqHeaders), Equals, stale)
+	if getFreshness(respHeaders, reqHeaders) != stale {
+		t.FailNow()
+	}
 }
 
-func (s *S) TestMinFreshWithExpires(c *C) {
+func TestMinFreshWithExpires(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	now := time.Now()
 	respHeaders := http.Header{}
 	respHeaders.Set("date", now.Format(time.RFC1123))
@@ -589,14 +765,20 @@ func (s *S) TestMinFreshWithExpires(c *C) {
 
 	reqHeaders := http.Header{}
 	reqHeaders.Set("cache-control", "min-fresh=1")
-	c.Assert(getFreshness(respHeaders, reqHeaders), Equals, fresh)
+	if getFreshness(respHeaders, reqHeaders) != fresh {
+		t.FailNow()
+	}
 
 	reqHeaders = http.Header{}
 	reqHeaders.Set("cache-control", "min-fresh=2")
-	c.Assert(getFreshness(respHeaders, reqHeaders), Equals, stale)
+	if getFreshness(respHeaders, reqHeaders) != stale {
+		t.FailNow()
+	}
 }
 
-func (s *S) TestEmptyMaxStale(c *C) {
+func TestEmptyMaxStale(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	now := time.Now()
 	respHeaders := http.Header{}
 	respHeaders.Set("date", now.Format(time.RFC1123))
@@ -607,14 +789,20 @@ func (s *S) TestEmptyMaxStale(c *C) {
 
 	clock = &fakeClock{elapsed: 10 * time.Second}
 
-	c.Assert(getFreshness(respHeaders, reqHeaders), Equals, fresh)
+	if getFreshness(respHeaders, reqHeaders) != fresh {
+		t.FailNow()
+	}
 
 	clock = &fakeClock{elapsed: 60 * time.Second}
 
-	c.Assert(getFreshness(respHeaders, reqHeaders), Equals, fresh)
+	if getFreshness(respHeaders, reqHeaders) != fresh {
+		t.FailNow()
+	}
 }
 
-func (s *S) TestMaxStaleValue(c *C) {
+func TestMaxStaleValue(t *testing.T) {
+	setup()
+	defer tearDownTest()
 	now := time.Now()
 	respHeaders := http.Header{}
 	respHeaders.Set("date", now.Format(time.RFC1123))
@@ -624,15 +812,21 @@ func (s *S) TestMaxStaleValue(c *C) {
 	reqHeaders.Set("cache-control", "max-stale=20")
 	clock = &fakeClock{elapsed: 5 * time.Second}
 
-	c.Assert(getFreshness(respHeaders, reqHeaders), Equals, fresh)
+	if getFreshness(respHeaders, reqHeaders) != fresh {
+		t.FailNow()
+	}
 
 	clock = &fakeClock{elapsed: 15 * time.Second}
 
-	c.Assert(getFreshness(respHeaders, reqHeaders), Equals, fresh)
+	if getFreshness(respHeaders, reqHeaders) != fresh {
+		t.FailNow()
+	}
 
 	clock = &fakeClock{elapsed: 30 * time.Second}
 
-	c.Assert(getFreshness(respHeaders, reqHeaders), Equals, stale)
+	if getFreshness(respHeaders, reqHeaders) != stale {
+		t.FailNow()
+	}
 }
 
 func containsHeader(headers []string, header string) bool {
@@ -644,25 +838,8 @@ func containsHeader(headers []string, header string) bool {
 	return false
 }
 
-type containsHeaderChecker struct {
-	*CheckerInfo
-}
-
-func (c *containsHeaderChecker) Check(params []interface{}, names []string) (bool, string) {
-	items, ok := params[0].([]string)
-	if !ok {
-		return false, "Expected first param to be []string"
-	}
-	value, ok := params[1].(string)
-	if !ok {
-		return false, "Expected 2nd param to be string"
-	}
-	return containsHeader(items, value), ""
-}
-
-var ContainsHeader Checker = &containsHeaderChecker{&CheckerInfo{Name: "Contains", Params: []string{"Container", "expected to contain"}}}
-
-func (s *S) TestGetEndToEndHeaders(c *C) {
+func TestGetEndToEndHeaders(t *testing.T) {
+	setup()
 	var (
 		headers http.Header
 		end2end []string
@@ -673,24 +850,39 @@ func (s *S) TestGetEndToEndHeaders(c *C) {
 	headers.Set("te", "deflate")
 
 	end2end = getEndToEndHeaders(headers)
-	c.Check(end2end, ContainsHeader, "content-type")
-	c.Check(end2end, Not(ContainsHeader), "te")
+	if !containsHeader(end2end, "content-type") {
+		t.FailNow()
+	}
+	if containsHeader(end2end, "te") {
+		t.FailNow()
+	}
 
 	headers = http.Header{}
 	headers.Set("connection", "content-type")
 	headers.Set("content-type", "text/csv")
 	headers.Set("te", "deflate")
 	end2end = getEndToEndHeaders(headers)
-	c.Check(end2end, Not(ContainsHeader), "connection")
-	c.Check(end2end, Not(ContainsHeader), "content-type")
-	c.Check(end2end, Not(ContainsHeader), "te")
+	if containsHeader(end2end, "connection") {
+		t.FailNow()
+	}
+	if containsHeader(end2end, "content-type") {
+		t.FailNow()
+	}
+	if containsHeader(end2end, "te") {
+		t.FailNow()
+	}
 
 	headers = http.Header{}
 	end2end = getEndToEndHeaders(headers)
-	c.Check(end2end, HasLen, 0)
+	if len(end2end) != 0 {
+		t.FailNow()
+	}
 
 	headers = http.Header{}
 	headers.Set("connection", "content-type")
 	end2end = getEndToEndHeaders(headers)
-	c.Check(end2end, HasLen, 0)
+	if len(end2end) != 0 {
+		t.FailNow()
+	}
+	tearDownTest()
 }
