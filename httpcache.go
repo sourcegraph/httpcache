@@ -76,7 +76,7 @@ func CachedResponse(c Cache, req *http.Request) (resp *http.Response, err error)
 		strContentLength := returnResponse.Header.Get("content-length")
 		contentLength, err := strconv.ParseInt(strContentLength, 10, 64)
 		if err != nil {
-			return nil, fmt.Errorf("response loaded from cache has null or malformed content-length: %s", contentLength)
+			return nil, fmt.Errorf("response loaded from cache has null or malformed content-length: %d", contentLength)
 		}
 		rangeRequestStart, rangeRequestEnd, err := findRanges(req, contentLength)
 		if err != nil {
@@ -88,7 +88,7 @@ func CachedResponse(c Cache, req *http.Request) (resp *http.Response, err error)
 
 		body, err := ioutil.ReadAll(returnResponse.Body)
 		if err != nil {
-			logger.Print("error reading cached response body: %s", err.Error())
+			logger.Printf("error reading cached response body: %s", err.Error())
 			return returnResponse, nil
 		}
 		returnResponse.Body.Close()
@@ -196,7 +196,7 @@ func validateRanges(start, end int64, resp *http.Response) (ok bool) {
 	}
 	contentLength, err := strconv.ParseInt(resp.Header.Get("content-length"), 10, 64)
 	if err != nil {
-		logger.Printf("stored response has malformed or invalid content length %s", contentLength)
+		logger.Printf("stored response has malformed or invalid content length %d", contentLength)
 		return false
 	}
 	if end > contentLength {
