@@ -142,7 +142,7 @@ func findRanges(r *http.Request, totalLength int64) (start, end int64, err error
 		}
 	}
 	if start >= end {
-		return -1, -1, fmt.Errorf("invalid start %d >= end %d!", start, end)
+		return -1, -1, fmt.Errorf("invalid start %d >= end %d", start, end)
 	}
 	return start, end, nil
 }
@@ -526,7 +526,7 @@ func getEndToEndHeaders(respHeaders http.Header) []string {
 		}
 	}
 	endToEndHeaders := []string{}
-	for respHeader, _ := range respHeaders {
+	for respHeader := range respHeaders {
 		if _, ok := hopByHopHeaders[respHeader]; !ok {
 			endToEndHeaders = append(endToEndHeaders, respHeader)
 		}
