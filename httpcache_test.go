@@ -1,6 +1,8 @@
 package httpcache
 
 import (
+	"fmt"
+	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -84,6 +86,18 @@ func setup() {
 		w.Header().Set("Vary", "X-Madeup-Header")
 		w.Write([]byte("Some text content"))
 	}))
+	mux.HandleFunc("/ranged", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		testData := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+		w.Header().Set("Cache-Control", "max-age=3600")
+		w.Header().Set("Content-Type", "text/plain")
+		start, end, err := findRanges(r, int64(len(testData)))
+		if err == nil {
+			w.Header().Set("content-range", fmt.Sprintf("bytes %d-%d/%d", start, end, len(testData)))
+			w.Write([]byte(testData)[start:end])
+		} else {
+			w.Write([]byte(testData))
+		}
+	}))
 
 	updateFieldsCounter := 0
 	mux.HandleFunc("/updatefields", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -104,6 +118,184 @@ func tearDownTest() {
 	s.server.Close()
 }
 
+func TestSuffixRangedQuery(t *testing.T) {
+	setup()
+	defer tearDownTest()
+	req, err := http.NewRequest("GET", s.server.URL+"/ranged", nil)
+	if err != nil {
+		t.FailNow()
+	}
+	resp, err := s.client.Do(req)
+	defer resp.Body.Close()
+	if err != nil {
+		t.FailNow()
+	}
+	data, err := ioutil.ReadAll(resp.Body)
+	if len(data) != 52 || string(data) != "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz" || resp.Header.Get(XFromCache) != "" {
+		t.FailNow()
+	}
+
+	req.Header.Add("Range", "bytes=10-")
+	resp2, err := s.client.Do(req)
+	defer resp2.Body.Close()
+	if err != nil || resp2.Header.Get(XFromCache) != "1" {
+		t.FailNow()
+	}
+	data2, err := ioutil.ReadAll(resp2.Body)
+	if len(data2) != 42 || string(data2) != "KLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz" || resp2.Header.Get("content-range") != "bytes 10-52/52" {
+		t.FailNow()
+	}
+}
+
+func TestPrefixRangedQuery(t *testing.T) {
+	setup()
+	defer tearDownTest()
+	req, err := http.NewRequest("GET", s.server.URL+"/ranged", nil)
+	if err != nil {
+		t.FailNow()
+	}
+	resp, err := s.client.Do(req)
+	defer resp.Body.Close()
+	if err != nil {
+		t.FailNow()
+	}
+	data, err := ioutil.ReadAll(resp.Body)
+	failedTest := err != nil ||
+		len(data) != 52 ||
+		string(data) != "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz" ||
+		resp.Header.Get("content-range") != "" ||
+		resp.Header.Get(XFromCache) != ""
+	if failedTest {
+		t.FailNow()
+	}
+
+	req.Header.Add("Range", "bytes=-10")
+	resp2, err := s.client.Do(req)
+	defer resp2.Body.Close()
+	if err != nil || resp2.Header.Get(XFromCache) != "1" {
+		t.FailNow()
+	}
+	data2, err := ioutil.ReadAll(resp2.Body)
+	failedTest = err != nil ||
+		len(data2) != 10 ||
+		string(data2) != "qrstuvwxyz" ||
+		resp2.Header.Get("content-range") != "bytes 42-52/52"
+	if failedTest {
+		t.FailNow()
+	}
+}
+
+func TestCompleteRangedQuery(t *testing.T) {
+	setup()
+	defer tearDownTest()
+	req, err := http.NewRequest("GET", s.server.URL+"/ranged", nil)
+	if err != nil {
+		t.FailNow()
+	}
+	req.Header.Add("Range", "bytes=0-10")
+	resp, err := s.client.Do(req)
+	defer resp.Body.Close()
+	if err != nil {
+		t.FailNow()
+	}
+	data, err := ioutil.ReadAll(resp.Body)
+	if err != nil || len(data) != 10 || string(data) != "ABCDEFGHIJ" {
+		t.FailNow()
+	}
+	resp2, err := s.client.Do(req)
+	defer resp2.Body.Close()
+	if err != nil || resp2.Header.Get(XFromCache) != "1" {
+		t.FailNow()
+	}
+	data2, err := ioutil.ReadAll(resp2.Body)
+	if len(data2) != 10 || string(data2) != "ABCDEFGHIJ" || resp2.Header.Get("content-range") != "bytes 0-10/10" {
+		t.FailNow()
+	}
+}
+
+func TestPartialSubrangeRangedQuery(t *testing.T) {
+	setup()
+	defer tearDownTest()
+	req, err := http.NewRequest("GET", s.server.URL+"/ranged", nil)
+	if err != nil {
+		t.FailNow()
+	}
+	req.Header.Add("Range", "bytes=0-10")
+	resp, err := s.client.Do(req)
+	if err != nil {
+		t.FailNow()
+	}
+	defer resp.Body.Close()
+	data, err := ioutil.ReadAll(resp.Body)
+	if len(data) != 10 || string(data) != "ABCDEFGHIJ" || resp.Header.Get("content-range") != "bytes 0-10/52" {
+		t.FailNow()
+	}
+
+	req2, err := http.NewRequest("GET", s.server.URL+"/ranged", nil)
+	if err != nil {
+		t.FailNow()
+	}
+	req2.Header.Add("Range", "bytes=4-6")
+	resp2, err := s.client.Do(req2)
+	if err != nil {
+		t.FailNow()
+	}
+	defer resp2.Body.Close()
+	if resp2.Header.Get(XFromCache) != "1" {
+		t.FailNow()
+	}
+	data2, err := ioutil.ReadAll(resp2.Body)
+	failedTest := err != nil ||
+		len(data2) != 2 ||
+		string(data2) != "EF" ||
+		resp2.Header.Get("content-range") != "bytes 4-6/10"
+	if failedTest {
+		t.FailNow()
+	}
+
+	// test failing subrange outside previously held one
+	req3, err := http.NewRequest("GET", s.server.URL+"/ranged", nil)
+	if err != nil {
+		t.FailNow()
+	}
+	req3.Header.Add("Range", "bytes=8-15")
+	resp3, err := s.client.Do(req3)
+	defer resp3.Body.Close()
+	if err != nil || resp3.Header.Get(XFromCache) != "" {
+		t.FailNow()
+	}
+	data3, err := ioutil.ReadAll(resp3.Body)
+	failedTest = err != nil ||
+		len(data3) != 7 ||
+		string(data3) != "IJKLMNO" ||
+		resp3.Header.Get("content-range") != "bytes 8-15/52"
+	if failedTest {
+		t.FailNow()
+	}
+}
+
+func TestMultipleSubrangeRangedQuery(t *testing.T) {
+	setup()
+	defer tearDownTest()
+	req, err := http.NewRequest("GET", s.server.URL+"/ranged", nil)
+	if err != nil {
+		t.FailNow()
+	}
+	req.Header.Add("Range", "bytes=0-10,15-40")
+	resp, err := s.client.Do(req)
+	if err != nil {
+		t.FailNow()
+	}
+	defer resp.Body.Close()
+	data, err := ioutil.ReadAll(resp.Body)
+	failedTest := err != nil ||
+		len(data) != 52 ||
+		string(data) != "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+	if failedTest {
+		t.FailNow()
+	}
+}
+
 func TestGetOnlyIfCachedHit(t *testing.T) {
 	setup()
 	defer tearDownTest()
@@ -122,6 +314,9 @@ func TestGetOnlyIfCachedHit(t *testing.T) {
 
 	req2, err2 := http.NewRequest("GET", s.server.URL, nil)
 	req2.Header.Add("cache-control", "only-if-cached")
+	if err2 != nil {
+		t.FailNow()
+	}
 	resp2, err2 := s.client.Do(req)
 	defer resp2.Body.Close()
 	if err2 != nil || resp2.Header.Get(XFromCache) != "1" || resp2.StatusCode != http.StatusOK {
@@ -133,6 +328,9 @@ func TestGetOnlyIfCachedMiss(t *testing.T) {
 	setup()
 	defer tearDownTest()
 	req, err := http.NewRequest("GET", s.server.URL, nil)
+	if err != nil {
+		t.FailNow()
+	}
 	req.Header.Add("cache-control", "only-if-cached")
 	resp, err := s.client.Do(req)
 	defer resp.Body.Close()
@@ -145,6 +343,9 @@ func TestGetNoStoreRequest(t *testing.T) {
 	setup()
 	defer tearDownTest()
 	req, err := http.NewRequest("GET", s.server.URL, nil)
+	if err != nil {
+		t.FailNow()
+	}
 	req.Header.Add("Cache-Control", "no-store")
 	resp, err := s.client.Do(req)
 	defer resp.Body.Close()
@@ -163,6 +364,9 @@ func TestGetNoStoreResponse(t *testing.T) {
 	setup()
 	defer tearDownTest()
 	req, err := http.NewRequest("GET", s.server.URL+"/nostore", nil)
+	if err != nil {
+		t.FailNow()
+	}
 	resp, err := s.client.Do(req)
 	defer resp.Body.Close()
 	if err != nil || resp.Header.Get(XFromCache) != "" {
@@ -180,6 +384,9 @@ func TestGetWithEtag(t *testing.T) {
 	setup()
 	defer tearDownTest()
 	req, err := http.NewRequest("GET", s.server.URL+"/etag", nil)
+	if err != nil {
+		t.FailNow()
+	}
 	resp, err := s.client.Do(req)
 	defer resp.Body.Close()
 	if err != nil || resp.Header.Get(XFromCache) != "" {
@@ -206,6 +413,9 @@ func TestGetWithLastModified(t *testing.T) {
 	setup()
 	defer tearDownTest()
 	req, err := http.NewRequest("GET", s.server.URL+"/lastmodified", nil)
+	if err != nil {
+		t.FailNow()
+	}
 	resp, err := s.client.Do(req)
 	defer resp.Body.Close()
 	if err != nil || resp.Header.Get(XFromCache) != "" {
@@ -223,6 +433,9 @@ func TestGetWithVary(t *testing.T) {
 	setup()
 	defer tearDownTest()
 	req, err := http.NewRequest("GET", s.server.URL+"/varyaccept", nil)
+	if err != nil {
+		t.FailNow()
+	}
 	req.Header.Set("Accept", "text/plain")
 	resp, err := s.client.Do(req)
 	defer resp.Body.Close()
@@ -255,6 +468,9 @@ func TestGetWithDoubleVary(t *testing.T) {
 	setup()
 	defer tearDownTest()
 	req, err := http.NewRequest("GET", s.server.URL+"/doublevary", nil)
+	if err != nil {
+		t.FailNow()
+	}
 	req.Header.Set("Accept", "text/plain")
 	req.Header.Set("Accept-Language", "da, en-gb;q=0.8, en;q=0.7")
 	resp, err := s.client.Do(req)
@@ -294,6 +510,9 @@ func TestGetWith2VaryHeaders(t *testing.T) {
 		acceptLanguage = "da, en-gb;q=0.8, en;q=0.7"
 	)
 	req, err := http.NewRequest("GET", s.server.URL+"/2varyheaders", nil)
+	if err != nil {
+		t.FailNow()
+	}
 	req.Header.Set("Accept", accept)
 	req.Header.Set("Accept-Language", acceptLanguage)
 	resp, err := s.client.Do(req)
@@ -348,6 +567,9 @@ func TestGetVaryUnused(t *testing.T) {
 	setup()
 	defer tearDownTest()
 	req, err := http.NewRequest("GET", s.server.URL+"/varyunused", nil)
+	if err != nil {
+		t.FailNow()
+	}
 	req.Header.Set("Accept", "text/plain")
 	resp, err := s.client.Do(req)
 	defer resp.Body.Close()
@@ -366,6 +588,9 @@ func TestUpdateFields(t *testing.T) {
 	setup()
 	defer tearDownTest()
 	req, err := http.NewRequest("GET", s.server.URL+"/updatefields", nil)
+	if err != nil {
+		t.FailNow()
+	}
 	resp, err := s.client.Do(req)
 	defer resp.Body.Close()
 	if err != nil {
